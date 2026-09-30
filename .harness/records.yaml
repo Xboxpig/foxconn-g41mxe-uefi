@@ -563,6 +563,18 @@ documents:
     authorization: null
     scope: null
   merged_into: null
+- id: rtm1-github-publication
+  path: releases/g41mxe-rtm1/evidence/publication.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
 evidence:
 - id: ev-73648272929543f1
   proposal_id: p-rtm1-baseline

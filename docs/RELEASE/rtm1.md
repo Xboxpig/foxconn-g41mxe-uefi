@@ -30,6 +30,7 @@ CSM 的真实 Legacy 磁盘/GMA INT10/设置跨重启持久化、独显、Legacy
 ## 部署与发布
 
 该版本已写入用户芯片并收到真机反馈；RTM1 文件只是归档改名，没有再次刷写。
-没有创建公共 release、上传外部仓库或获得 ASUS/Foxconn 的公开分发许可。
+2026-10-01，按用户明确授权上传公共 GitHub 仓库并发布 RTM1；公开下载 ROM 已校验为相同字节。
+实际分发与软件检查另见[公开发布记录](../../releases/g41mxe-rtm1/evidence/publication.md)，
+不扩大已认可硬件范围，也不代表获得 ASUS/Foxconn 的公开分发许可。
 未来 ROM 内容变化需重新构建、校验和真实验收；不可覆盖本文件的镜像身份冒充同一 RTM。
-

@@ -107,4 +107,4 @@ Markdown 保存原文。技术记录登记为工程资料，不因整理自动�
 语义模型没有为本次整理额外下载；需要检索时可显式使用 `search ... --lexical-fallback`。
 本机过程脚本、日志、诊断 ROM 和旧 build 经保全后移入回收站；回收站未清空前仍可恢复。
 已认可 SPEC/RELEASE 中的“尚未公开发布”是基线登记时的分发状态；后续 GitHub 分发事件
-单独记录在 releases/g41mxe-rtm1/evidence/publication.md，不回写已认可契约或扩大验收范围。
+单独记录在[公开发布记录](releases/g41mxe-rtm1/evidence/publication.md)，不回写已认可契约或扩大验收范围。
