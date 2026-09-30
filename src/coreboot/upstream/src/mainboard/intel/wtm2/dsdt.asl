@@ -1,0 +1,42 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#define ENABLE_TPM
+
+#include <acpi/acpi.h>
+DefinitionBlock(
+	"dsdt.aml",
+	"DSDT",
+	ACPI_DSDT_REV_2,
+	OEM_ID,
+	ACPI_TABLE_CREATOR,
+	COREBOOT_OEM_REVISION
+)
+{
+	#include <acpi/dsdt_top.asl>
+	#include <southbridge/intel/common/acpi/platform.asl>
+
+	#include "acpi/platform.asl"
+
+	// global NVS and variables
+	#include <southbridge/intel/wildcatpoint/acpi/globalnvs.asl>
+	#include <southbridge/intel/wildcatpoint/acpi/device_nvs.asl>
+
+	// CPU
+	#include <cpu/intel/common/acpi/cpu.asl>
+
+	Scope (\_SB) {
+		Device (PCI0)
+		{
+			#include <northbridge/intel/haswell/acpi/hostbridge.asl>
+			#include <southbridge/intel/lynxpoint/acpi/pch.asl>
+		}
+	}
+
+	// Thermal handler
+	#include "acpi/thermal.asl"
+
+	#include <southbridge/intel/common/acpi/sleepstates.asl>
+
+	// Mainboard specific
+	#include "acpi/mainboard.asl"
+}

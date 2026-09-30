@@ -1,0 +1,2 @@
+// Reuses the embedded ASUS donor logo; no filesystem discovery is needed.
+#image IMG_LOGO AsusLogo.bmp

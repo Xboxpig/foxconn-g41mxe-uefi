@@ -1,0 +1,116 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config SOC_QUALCOMM_X1P42100_BASE
+	bool
+	default n
+	select ARCH_BOOTBLOCK_ARMV8_64
+	select ARCH_RAMSTAGE_ARMV8_64
+	select ARCH_ROMSTAGE_ARMV8_64
+	select ARCH_VERSTAGE_ARMV8_64
+	select ARM64_USE_ARCH_TIMER
+	select ARM64_USE_ARM_TRUSTED_FIRMWARE
+	select CACHE_MRC_SETTINGS
+	select CBFS_PRELOAD
+	select COOP_MULTITASKING
+	select COMMONLIB_STORAGE
+	select COMMONLIB_STORAGE_SD
+	select COMPRESS_BOOTBLOCK
+	select FIXED_UART_FOR_CONSOLE
+	select GENERIC_GPIO_LIB
+	select GENERIC_UDELAY
+	select HAS_RECOVERY_MRC_CACHE
+	select HAVE_LINEAR_FRAMEBUFFER
+	select HAVE_MONOTONIC_TIMER
+	select HAVE_UART_SPECIAL
+	select MAINBOARD_FORCE_NATIVE_VGA_INIT
+	select MAINBOARD_HAS_NATIVE_VGA_INIT
+	select PCI
+	select QC_APDP_ENABLE
+	select QC_COMMON_QUPV3_2
+	select QC_RAMDUMP_ENABLE
+	select QC_MEMCHIP_INFO_ON_RERUN
+	select QC_SANITIZE_MEMCHIP_INFO
+	select QMP_PHY_2X2_1X4
+	select NO_ECAM_MMCONF_SUPPORT
+	select SDHCI_CONTROLLER
+	select SOC_QUALCOMM_COMMON
+	select SOC_QUALCOMM_QCLIB_SKIP_MMU_TOGGLE
+
+config SOC_QUALCOMM_X1P42100
+	bool
+	select ARM64_USE_SECURE_OS
+	select ARM64_USE_SECURE_OS_PAYLOAD
+	select SOC_QUALCOMM_X1P42100_BASE
+	default n
+	help
+	  Choose this option if the mainboard is built using Qualcomm X1P42100 system-on-a-chip SoC.
+
+config SOC_QUALCOMM_HAMOA
+	bool
+	select ARM64_USE_SECURE_OS
+	select ARM64_USE_SECURE_OS_PAYLOAD
+	select SOC_QUALCOMM_X1P42100_BASE
+	default n
+	help
+	  Choose this option if the mainboard is built using Qualcomm Hamoa system-on-a-chip SoC.
+
+if SOC_QUALCOMM_X1P42100_BASE
+
+config QC_RAMDUMP_ENABLE
+	bool
+	default y if QC_RAMDUMP
+
+config QC_BLOBS_UPSTREAM
+	bool "QC blobs are available in upstream repository"
+	select USE_QC_BLOBS
+	default n
+	help
+	  Select based on availability of QC blobs in upstream coreboot `3rdparty/qc_blobs`.
+
+config MEMLAYOUT_LD_FILE
+	string
+	default "src/soc/qualcomm/x1p42100/memlayout.ld"
+
+config VBOOT
+	select VBOOT_MUST_REQUEST_DISPLAY
+	select VBOOT_RETURN_FROM_VERSTAGE
+	select VBOOT_SEPARATE_VERSTAGE
+	select VBOOT_STARTS_IN_BOOTBLOCK
+
+config BOOT_DEVICE_SPI_FLASH_BUS
+	int
+	default 24
+
+config UART_FOR_CONSOLE
+	int
+	default 21
+	help
+	 Select the QUP instance to be used for UART console output.
+
+config UART_BITBANG_TX_DELAY_MS
+	int
+	default 1
+
+config SPI_FREQ_25MHZ
+	def_bool n
+
+config SPI_FREQ_50MHZ
+	def_bool n
+
+config SPI_FREQ_75MHZ
+	def_bool n
+
+config SPI_FREQ_100MHZ
+	def_bool n
+
+config SOC_SPI_FREQ_MHZ
+	int
+	default 25 if SPI_FREQ_25MHZ
+	default 50 if SPI_FREQ_50MHZ
+	default 75 if SPI_FREQ_75MHZ
+	default 100 if SPI_FREQ_100MHZ
+	default 50
+	help
+	  Supported SPI Frequency for Hamoa/X1P42100 Platforms
+
+endif

@@ -1,0 +1,175 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+# LattePanda Mu compute module SOM only
+
+chip soc/intel/alderlake
+
+	# FSP configuration
+	# SaGv Configuration
+	register "sagv" = "SaGv_Enabled"
+
+	register "s0ix_enable" = "1"
+
+	# Configure external V1P05/Vnn/VnnSx Rails
+	register "ext_fivr_settings" = "{
+		.configure_ext_fivr = 1,
+		.v1p05_enable_bitmap = FIVR_ENABLE_ALL_SX & ~FIVR_ENABLE_S0,
+		.vnn_enable_bitmap = FIVR_ENABLE_ALL_SX,
+		.vnn_sx_enable_bitmap = FIVR_ENABLE_ALL_SX,
+		.v1p05_supported_voltage_bitmap = FIVR_VOLTAGE_NORMAL,
+		.vnn_supported_voltage_bitmap = FIVR_VOLTAGE_MIN_ACTIVE,
+		.v1p05_voltage_mv = 1050,
+		.vnn_voltage_mv = 780,
+		.vnn_sx_voltage_mv = 1050,
+		.v1p05_icc_max_ma = 500,
+		.vnn_icc_max_ma = 500,
+	}"
+
+	register "pmc_gpe0_dw0" = "GPP_B"
+	register "pmc_gpe0_dw1" = "GPP_D"
+	register "pmc_gpe0_dw2" = "GPP_E"
+
+	register "serial_io_i2c_mode" = "{
+		[PchSerialIoIndexI2C0] = PchSerialIoPci,
+		[PchSerialIoIndexI2C1] = PchSerialIoPci,
+		[PchSerialIoIndexI2C2] = PchSerialIoDisabled,
+		[PchSerialIoIndexI2C3] = PchSerialIoDisabled,
+		[PchSerialIoIndexI2C4] = PchSerialIoDisabled,
+		[PchSerialIoIndexI2C5] = PchSerialIoDisabled,
+	}"
+
+	register "common_soc_config" = "{
+		.i2c[0] = {
+			.speed = I2C_SPEED_FAST,
+		},
+		.i2c[1] = {
+			.speed = I2C_SPEED_FAST,
+		},
+	}"
+
+	device domain 0 on
+
+		device ref crashlog off end
+
+		device ref shared_sram on end
+
+		device ref igpu on
+			register "ddi_ports_config" = "{
+				[DDI_PORT_A] = DDI_ENABLE_HPD | DDI_ENABLE_DDC,
+				[DDI_PORT_B] = DDI_ENABLE_HPD | DDI_ENABLE_DDC,
+				[DDI_PORT_C] = DDI_ENABLE_HPD | DDI_ENABLE_DDC,
+			}"
+		end
+
+		device ref emmc on
+			register "emmc_enable_hs400_mode" = "1"
+		end
+
+		device ref hda on
+			register "pch_hda_dsp_enable" = "true"
+			register "pch_hda_idisp_link_tmode" = "HDA_TMODE_8T"
+			register "pch_hda_idisp_link_frequency" = "HDA_LINKFREQ_96MHZ"
+			register "pch_hda_idisp_codec_enable" = "1"
+		end
+
+		device ref i2c0 on
+			chip drivers/i2c/hid
+				register "generic.hid" = ""GDIX1001""
+				register "generic.cid" = ""GDIX1001""
+				register "generic.desc" = ""Goodix Touchscreen""
+				register "generic.irq_gpio" = "ACPI_GPIO_IRQ_LEVEL_LOW(GPP_E17)"
+				register "hid_desc_reg_offset" = "0x01"
+				device i2c 14 alias touchscreen on end
+			end
+		end
+
+		device ref i2c1 on end
+
+		device ref pch_espi on
+			register "gen1_dec" = "LPC_IO(0xa00, 0x80)"
+			chip superio/ite/it8613e
+				register "ec.vin_mask" = "VIN_ALL"
+				register "TMPIN1.mode" = "THERMAL_PECI"
+				register "TMPIN1.offset" = "0x68"
+				# CPU_FAN
+				register "FAN2" = "{
+					.mode = FAN_SMART_AUTOMATIC,
+					.smart = {
+						.tmpin     =  1,
+						.tmp_off   = 35,
+						.tmp_start = 40,
+						.tmp_full  = 100,
+						.tmp_delta =  4,
+						.pwm_start = 31,
+						.slope     = 16,
+					},
+				}"
+				# SYS_FAN
+				register "FAN3" = "{
+					.mode = FAN_SMART_AUTOMATIC,
+					.smart = {
+						.tmpin     =  1,
+						.tmp_off   = 35,
+						.tmp_start = 40,
+						.tmp_full  = 100,
+						.tmp_delta =  4,
+						.pwm_start = 31,
+						.slope     = 16,
+					},
+				}"
+				device pnp 2e.0 off end
+				device pnp 2e.1 on	# COM 1
+					io 0x60 = 0x3f8
+					irq 0x70 = 0x4
+					irq 0xf0 = 0x1
+				end
+				device pnp 2e.4 on	# Environment Controller
+					io 0x60 = 0xa40
+					io 0x62 = 0xa30
+					irq 0x70 = 0x00
+					# APC/PME control 1: PME# output disabled
+					irq 0xf2 = 0x40
+					# APC/PME control 2: AC-resume / PSON# policy
+					irq 0xf4 = 0xe0
+				end
+				device pnp 2e.5 off end # Keyboard
+				device pnp 2e.6 off end # Mouse
+				device pnp 2e.7 on	# GPIO
+					# Special Function Select 2: PWRGD sourced from ATXPG,
+					# PCH_D0B on pin 8, PANSWH# mask time 0s
+					irq 0x2b = 0x08
+					# GPIO Set 2 mux: 0 = native function (not GPIO)
+					irq 0x26 = 0x00
+					# FAN_TAC5/FAN_CTL5 disabled, S0ix gating off
+					irq 0x2d = 0x02
+					# SMI# normal-run access window base
+					io 0x60 = 0xa10
+					# Simple I/O window base
+					io 0x62 = 0xa00
+					# Panel-button de-bounce interrupt level: none
+					irq 0x70 = 0x00
+					# Watchdog: timeout 0 (disabled); 0x72 sets unit/PWRGD routing
+					irq 0x72 = 0x90
+					irq 0x73 = 0x00
+					# GPIO Set 5/6: enable internal pull-up
+					irq 0xbc = 0xc0
+					irq 0xbd = 0x03
+					# GPIO Set 1: all inputs
+					irq 0xc8 = 0x00
+					# Breath LED control: max duty FFh, 1s ramp delays, blink off
+					irq 0xda = 0xb0
+					irq 0xdb = 0x44
+				end
+				device pnp 2e.a off end # CIR
+			end
+		end
+
+		device ref smbus on end
+
+		device ref fast_spi on end
+
+		chip drivers/crb
+			device mmio 0xfed40000 on end
+		end
+	end
+end

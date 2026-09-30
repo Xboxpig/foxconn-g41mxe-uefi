@@ -1,0 +1,129 @@
+diff --git a/MdeModulePkg/Library/UefiBootManagerLib/BmLoadOption.c b/MdeModulePkg/Library/UefiBootManagerLib/BmLoadOption.c
+index 66faf57..b0cd8a8 100644
+--- a/MdeModulePkg/Library/UefiBootManagerLib/BmLoadOption.c
++++ b/MdeModulePkg/Library/UefiBootManagerLib/BmLoadOption.c
+@@ -60,13 +60,23 @@ BmForEachVariable (
+       NameSize = NewNameSize;
+     }
+ 
+-    if (Status == EFI_NOT_FOUND) {
+-      break;
+-    }
+-
+-    ASSERT_EFI_ERROR (Status);
+-
+-    Visitor (Name, &Guid, Context);
++    if (Status == EFI_NOT_FOUND) {
++      break;
++    }
++
++    //
++    // The DXE core exposes GetNextVariableName() before a variable driver has
++    // installed the real runtime service.  In that window it returns
++    // EFI_NOT_AVAILABLE_YET.  Do not spin forever with an unchanged empty
++    // name if the variable backend failed to become available; a later boot
++    // manager path can still operate without platform-recovery variables.
++    //
++    if (EFI_ERROR (Status)) {
++      DEBUG ((DEBUG_ERROR, "[Bds] GetNextVariableName failed: %r\n", Status));
++      break;
++    }
++
++    Visitor (Name, &Guid, Context);
+   }
+ 
+   FreePool (Name);
+diff --git a/MdeModulePkg/Universal/HiiDatabaseDxe/String.c b/MdeModulePkg/Universal/HiiDatabaseDxe/String.c
+index 96202de..3d93c19 100644
+--- a/MdeModulePkg/Universal/HiiDatabaseDxe/String.c
++++ b/MdeModulePkg/Universal/HiiDatabaseDxe/String.c
+@@ -162,7 +162,9 @@ GetUnicodeStringTextOrSize (
+ 
+   StringSize = sizeof (CHAR16);
+   StringPtr  = StringSrc;
+-  while (ReadUnaligned16 ((UINT16 *)StringPtr) != 0) {
++  // String blocks may be unaligned. A UTF-16 terminator is two zero bytes;
++  // testing bytes avoids an out-of-line unaligned-read helper for every glyph.
++  while ((StringPtr[0] != 0) || (StringPtr[1] != 0)) {
+     StringSize += sizeof (CHAR16);
+     StringPtr  += sizeof (CHAR16);
+   }
+diff --git a/MdeModulePkg/Universal/PCD/Dxe/Service.c b/MdeModulePkg/Universal/PCD/Dxe/Service.c
+index 761f422..b6924bd 100644
+--- a/MdeModulePkg/Universal/PCD/Dxe/Service.c
++++ b/MdeModulePkg/Universal/PCD/Dxe/Service.c
+@@ -33,8 +33,15 @@ UINTN       TmpTokenSpaceBufferCount;
+ 
+ UINTN             mPeiPcdDbSize    = 0;
+ PEI_PCD_DATABASE  *mPeiPcdDbBinary = NULL;
+-UINTN             mDxePcdDbSize    = 0;
+-DXE_PCD_DATABASE  *mDxePcdDbBinary = NULL;
++UINTN             mDxePcdDbSize    = 0;
++DXE_PCD_DATABASE  *mDxePcdDbBinary = NULL;
++
++#ifdef ASUS_SETUP_PAGE_LAB
++// PRIME Z490-A Setup reads platform token 415 before registering its HII data.
++// UefiPayloadPkg has no matching vendor PCD database; zero is sufficient for
++// the isolated renderer experiment and keeps the workaround out of real builds.
++STATIC UINT32  mAsusSetupPcdToken415;
++#endif
+ 
+ /**
+   Get Local Token Number by Token Number.
+@@ -405,9 +412,20 @@ GetWorker (
+   //
+   TokenNumber--;
+ 
+-  TmpTokenNumber = TokenNumber;
+-
+-  //
++  TmpTokenNumber = TokenNumber;
++
++#ifdef ASUS_SETUP_PAGE_LAB
++  if (((TokenNumber + 1) == 415) &&
++      (TokenNumber + 1 >= mPcdTotalTokenCount + 1) &&
++      (GetSize == sizeof (mAsusSetupPcdToken415)))
++  {
++    DEBUG ((DEBUG_WARN, "ASUS Setup lab: supplying zero for missing PCD token 415\n"));
++    EfiReleaseLock (&mPcdDatabaseLock);
++    return &mAsusSetupPcdToken415;
++  }
++#endif
++
++  //
+   // EBC compiler is very choosy. It may report warning about comparison
+   // between UINTN and 0 . So we add 1 in each size of the
+   // comparison.
+diff --git a/MdeModulePkg/Universal/Variable/RuntimeDxe/Variable.c b/MdeModulePkg/Universal/Variable/RuntimeDxe/Variable.c
+index 10fb4a3..f0f4c03 100644
+--- a/MdeModulePkg/Universal/Variable/RuntimeDxe/Variable.c
++++ b/MdeModulePkg/Universal/Variable/RuntimeDxe/Variable.c
+@@ -2902,9 +2902,25 @@ VariableServiceSetVariable (
+     Status = UpdateVariable (VariableName, VendorGuid, Data, DataSize, Attributes, 0, 0, &Variable, NULL);
+   }
+ 
+-Done:
+-  InterlockedDecrement (&mVariableModuleGlobal->VariableGlobal.ReentrantState);
+-  ReleaseLockOnlyAtBootTime (&mVariableModuleGlobal->VariableGlobal.VariableServicesLock);
++Done:
++  InterlockedDecrement (&mVariableModuleGlobal->VariableGlobal.ReentrantState);
++  ReleaseLockOnlyAtBootTime (&mVariableModuleGlobal->VariableGlobal.VariableServicesLock);
++
++#ifdef ASUS_SETUP_PAGE_LAB
++  // Lab-only evidence of the vendor save path, not a hardware setting hook.
++  if (!AtRuntime () &&
++      ((StrCmp (VariableName, L"AsusQFanSetupData") == 0) ||
++       (StrCmp (VariableName, L"SaSetup") == 0))) {
++    DEBUG ((DEBUG_INFO, "ASUS SAVE: %s %g size=%u status=%r\n",
++            VariableName, VendorGuid, (UINT32)DataSize, Status));
++    if (!EFI_ERROR (Status) && (Data != NULL) &&
++        (StrCmp (VariableName, L"AsusQFanSetupData") == 0) && (DataSize == 144)) {
++      DEBUG ((DEBUG_INFO, "ASUS SAVE: CPU mode=%u profile=%u CHA mode=%u profile=%u\n",
++              ((UINT8 *)Data)[0], ((UINT8 *)Data)[8],
++              ((UINT8 *)Data)[0x18], ((UINT8 *)Data)[0x20]));
++    }
++  }
++#endif
+ 
+   if (!AtRuntime ()) {
+     if (!EFI_ERROR (Status)) {

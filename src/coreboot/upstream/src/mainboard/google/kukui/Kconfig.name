@@ -1,0 +1,65 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+comment "Kukui (MediaTek Kompanio 500 (MT8183))"
+
+config BOARD_GOOGLE_KUKUI
+	bool "->  Kukui"
+
+config BOARD_GOOGLE_KRANE
+	bool "->  Krane (Lenovo Chromebook Duet/Lenovo IdeaPad Duet Chromebook)"
+
+config BOARD_GOOGLE_KODAMA
+	bool "->  Kodama (Lenovo 10e Chromebook Tablet)"
+
+config BOARD_GOOGLE_KAKADU
+	bool "->  Kakadu (ASUS Chromebook Detachable CM3)"
+
+config BOARD_GOOGLE_FLAPJACK
+	bool "->  Flapjack"
+
+config BOARD_GOOGLE_KATSU
+	bool "->  Katsu (ASUS Chromebook Detachable CZ1)"
+
+comment "Jacuzzi (MediaTek Kompanio 500 (MT8183))"
+
+config BOARD_GOOGLE_JACUZZI
+	bool "->  Jacuzzi"
+
+config BOARD_GOOGLE_JUNIPER
+	bool "->  Juniper (Acer Chromebook Spin 311 (CP311-3H))"
+
+config BOARD_GOOGLE_KAPPA
+	bool "->  Kappa (HP Chromebook 11a)"
+
+config BOARD_GOOGLE_DAMU
+	bool "->  Damu (ASUS Chromebook Flip CM3 (CM3200))"
+
+config BOARD_GOOGLE_CERISE
+	bool "->  Cerise"
+
+config BOARD_GOOGLE_STERN
+	bool "->  Stern"
+
+config BOARD_GOOGLE_WILLOW
+	bool "->  Willow (Acer Chromebook 311 (C722/C722T))"
+
+config BOARD_GOOGLE_ESCHE
+	bool "->  Esche (HP Chromebook 11MK G9 EE)"
+
+config BOARD_GOOGLE_BURNET
+	bool "->  Burnet (HP Chromebook x360 11MK G3 EE)"
+
+config BOARD_GOOGLE_FENNEL
+	bool "->  Fennel (Lenovo IdeaPad 3 Chromebook)"
+
+config BOARD_GOOGLE_COZMO
+	bool "->  Cozmo (Acer Chromebook 314 (CB314-2H/CB314-2HT))"
+
+config BOARD_GOOGLE_MAKOMO
+	bool "->  Makomo (Lenovo 100e Chromebook (2nd Gen))"
+
+config BOARD_GOOGLE_MUNNA
+	bool "->  Munna"
+
+config BOARD_GOOGLE_PICO
+	bool "->  Pico (Acer Chromebook Spin 311)"

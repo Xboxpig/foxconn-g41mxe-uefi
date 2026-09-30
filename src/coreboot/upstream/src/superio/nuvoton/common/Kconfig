@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+# Generic Nuvoton romstage driver - Just enough UART initialisation code for
+# pre-ram.
+config SUPERIO_NUVOTON_COMMON_PRE_RAM
+	bool
+
+config SUPERIO_NUVOTON_COMMON_COM_A
+	bool
+	depends on SUPERIO_NUVOTON_COMMON_PRE_RAM
+	help
+	  When enabled, the 'nuvoton_enable_serial()' function will unset
+	  global CR 0x2a bit 7 to route COM A to the GPIO8 pin group.
+
+config HAVE_SHARED_PS2_PORT
+	bool
+	depends on SUPERIO_NUVOTON_COMMON_PRE_RAM
+	help
+	  Select this option if your mainboard has a single PS/2 port for both keyboard and
+	  mouse, and where a Y-cable cannot allow both keyboard and mouse to work off the same
+	  port. This one port usually works for keyboards only. Add the nvram/CFR option
+	  "ps2_port_role" to allow changing this port into a mouse port.
+
+config SUPERIO_NUVOTON_COMMON_HWM
+	bool
+	help
+	  Shared hardware monitor helpers for Nuvoton super I/Os whose HWM
+	  block uses the banked-register interface (NCT67xx family). Provides
+	  PECI enable, PECI calibration, and SmartFan IV fan-curve programming.
+
+config SUPERIO_NUVOTON_PNP_BASE
+	hex
+	depends on SUPERIO_NUVOTON_COMMON_PRE_RAM
+	help
+	  Set the base port of the super I/O chip.

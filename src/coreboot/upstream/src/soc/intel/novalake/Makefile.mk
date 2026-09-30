@@ -1,0 +1,44 @@
+## SPDX-License-Identifier: GPL-2.0-only
+ifeq ($(CONFIG_SOC_INTEL_NOVALAKE_BASE),y)
+
+subdirs-y += ../../../cpu/intel/microcode
+subdirs-y += ../../../cpu/intel/turbo
+subdirs-y += romstage
+
+# all (bootblock, verstage, romstage, postcar, ramstage)
+all-y += gpio.c
+
+bootblock-y += bootblock/bootblock.c
+bootblock-y += bootblock/pcd.c
+bootblock-y += bootblock/report_platform.c
+
+romstage-$(CONFIG_SOC_INTEL_CSE_PRE_CPU_RESET_TELEMETRY) += cse_telemetry.c
+romstage-y += meminit.c
+romstage-y += pcie_rp.c
+romstage-y += tdp.c
+romstage-y += reset.c
+
+ramstage-y += acpi.c
+ramstage-y += chip.c
+ramstage-y += cpu.c
+ramstage-$(CONFIG_SOC_INTEL_CRASHLOG) += crashlog.c
+ramstage-y += fsp_params.c
+ramstage-y += p2sb.c
+ramstage-y += pcie_rp.c
+ramstage-y += pmc.c
+ramstage-y += reset.c
+ramstage-y += retimer.c
+ramstage-y += systemagent.c
+ramstage-y += tcss.c
+ramstage-$(CONFIG_DRIVERS_INTEL_TOUCH) += touch.c
+ramstage-y += tdp.c
+ramstage-y += xhci.c
+
+smm-y += gpio.c
+smm-y += p2sb.c
+smm-y += xhci.c
+
+CPPFLAGS_common += -I$(src)/soc/intel/novalake
+CPPFLAGS_common += -I$(src)/soc/intel/novalake/include
+
+endif

@@ -1,0 +1,606 @@
+schema: harness-records/v1
+modules:
+- id: firmware
+  title: firmware
+  paths: []
+contracts:
+- id: rtm-baseline@1.0.0#g41mxe-x5450
+  record_id: rtm-baseline@1.0.0#g41mxe-x5450
+  contract_id: rtm-baseline
+  module_id: firmware
+  scope: g41mxe-x5450
+  version: 1.0.0
+  status: current
+  source:
+    kind: proposal
+    proposal_id: p-rtm1-baseline
+  source_document_id: p-rtm1-baseline-spec
+  implementation_paths: &id002
+  - releases/g41mxe-rtm1/g41mxe-rtm1-16m.rom
+  validation_scenarios: &id001
+  - user-rtm-e2e
+  supersedes: null
+  superseded_by: null
+proposals:
+- id: p-rtm1-baseline
+  title: G41MXE RTM1 已认可镜像基线
+  status: completed
+  created_at: '2026-09-30T15:59:27+00:00'
+  changes: &id003
+  - action: add
+    contract_id: rtm-baseline
+    module_id: firmware
+    scope: g41mxe-x5450
+    version: 1.0.0
+  baseline: []
+  required_scenarios: *id001
+  implementation_paths: *id002
+  docs_only: false
+  layout: split
+  document_ids:
+  - p-rtm1-baseline-dev
+  - p-rtm1-baseline-spec
+  - p-rtm1-baseline-release
+  merged_into: null
+  completed_at: '2026-09-30T16:42:58+00:00'
+  acceptance_evidence_ids:
+  - ev-73648272929543f1
+documents:
+- id: p-rtm1-baseline-dev
+  path: docs/PROPOSALS/p-rtm1-baseline/DEV.md
+  role: DEV
+  status: history
+  proposal_id: p-rtm1-baseline
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: proposal
+    proposal_id: p-rtm1-baseline
+  merged_into: null
+- id: p-rtm1-baseline-spec
+  path: docs/SPEC/p-rtm1-baseline.md
+  role: SPEC
+  status: current
+  proposal_id: p-rtm1-baseline
+  module_ids: []
+  contract_ids:
+  - rtm-baseline
+  source:
+    kind: proposal
+    proposal_id: p-rtm1-baseline
+  merged_into: null
+  promoted_at: '2026-09-30T16:42:58+00:00'
+- id: p-rtm1-baseline-release
+  path: docs/RELEASE/p-rtm1-baseline.md
+  role: RELEASE
+  status: current
+  proposal_id: p-rtm1-baseline
+  module_ids: []
+  contract_ids:
+  - rtm-baseline
+  source:
+    kind: proposal
+    proposal_id: p-rtm1-baseline
+  merged_into: null
+  promoted_at: '2026-09-30T16:42:58+00:00'
+- id: asus-ui
+  path: docs/PORTING/asus-ui.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: coreboot-edk2
+  path: docs/PORTING/coreboot-edk2.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: setup-performance
+  path: docs/PORTING/setup-performance.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: linux-sensors
+  path: docs/PORTING/linux-sensors.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: g41mxe-it8720f
+  path: docs/PORTING/g41mxe-it8720f.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: native-csm
+  path: docs/PORTING/native-csm.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: licensing
+  path: docs/LICENSING.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: rtm1-validation
+  path: releases/g41mxe-rtm1/evidence/validation.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: rtm1-release-details
+  path: docs/RELEASE/rtm1.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-asus-ui-donor-and-fv
+  path: docs/PORTING/asus-ui/donor-and-fv.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-asus-ui-hii-import-navigation
+  path: docs/PORTING/asus-ui/hii-import-navigation.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-asus-ui-config-access
+  path: docs/PORTING/asus-ui/config-access.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-asus-ui-binary-patching
+  path: docs/PORTING/asus-ui/binary-patching.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-asus-ui-display-refresh
+  path: docs/PORTING/asus-ui/display-refresh.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-coreboot-edk2-flash-map-variables
+  path: docs/PORTING/coreboot-edk2/flash-map-variables.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-coreboot-edk2-settings-consumers
+  path: docs/PORTING/coreboot-edk2/settings-consumers.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-coreboot-edk2-source-build-boundaries
+  path: docs/PORTING/coreboot-edk2/source-build-boundaries.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-setup-performance-bds-lazy-connect
+  path: docs/PORTING/setup-performance/bds-lazy-connect.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-setup-performance-dxecore-assert
+  path: docs/PORTING/setup-performance/dxecore-assert.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-setup-performance-trace-and-evidence
+  path: docs/PORTING/setup-performance/trace-and-evidence.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-linux-sensors-read-only-baseline
+  path: docs/PORTING/linux-sensors/read-only-baseline.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-linux-sensors-p10-reverse-reference
+  path: docs/PORTING/linux-sensors/p10-reverse-reference.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-linux-sensors-tmpin2-aba
+  path: docs/PORTING/linux-sensors/tmpin2-aba.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-it8720f-probe-and-io
+  path: docs/PORTING/it8720f/probe-and-io.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-it8720f-temperature-fan
+  path: docs/PORTING/it8720f/temperature-fan.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-it8720f-voltage-adc
+  path: docs/PORTING/it8720f/voltage-adc.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-it8720f-clock-memory-data
+  path: docs/PORTING/it8720f/clock-memory-data.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-native-csm-platform-policy
+  path: docs/PORTING/native-csm/platform-policy.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-native-csm-low-memory-pam-thunk
+  path: docs/PORTING/native-csm/low-memory-pam-thunk.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-native-csm-pic-pirq-routing
+  path: docs/PORTING/native-csm/pic-pirq-routing.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: technical-native-csm-vbios-bbs-tests
+  path: docs/PORTING/native-csm/vbios-bbs-tests.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: engineering-coreboot-edk2-cpu-policy
+  path: docs/PORTING/coreboot-edk2/cpu-policy.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: engineering-coreboot-edk2-memory-training
+  path: docs/PORTING/coreboot-edk2/memory-training.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: engineering-coreboot-edk2-chipset-policy
+  path: docs/PORTING/coreboot-edk2/chipset-policy.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: engineering-it8720f-fan-control
+  path: docs/PORTING/it8720f/fan-control.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: engineering-coreboot-edk2-boot-fallback
+  path: docs/PORTING/coreboot-edk2/boot-fallback.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: engineering-coreboot-edk2-network-ipxe
+  path: docs/PORTING/coreboot-edk2/network-ipxe.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: engineering-coreboot-edk2-q35-shim
+  path: docs/PORTING/coreboot-edk2/q35-shim.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: engineering-README
+  path: docs/PORTING/README.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+- id: rtm1-github-notes
+  path: releases/g41mxe-rtm1/RELEASE-NOTES.md
+  role: LEGACY
+  status: legacy
+  proposal_id: null
+  module_ids: []
+  contract_ids: []
+  source:
+    kind: legacy-unverified
+    authorization: null
+    scope: null
+  merged_into: null
+evidence:
+- id: ev-73648272929543f1
+  proposal_id: p-rtm1-baseline
+  scenario: user-rtm-e2e
+  result: pass
+  environment: 用户真实 Foxconn G41MXE rev1.0 / Xeon X5450 / W25Q128.V；CH341A 写入 v6 后装回主板
+  command: 上一轮 flashrom -p ch341a_spi -c W25Q128.V -w g41mxe-asus-native-csm-v6-16m-CANDIDATE.rom -n，exit 0；用户真机启动并操作 ASUS UI；本次归档 SHA256 与已写入 v6 相同
+  artifact_identity:
+    kind: proposal-acceptance-v1
+    implementation:
+      kind: content-tree
+      declared_paths:
+      - releases/g41mxe-rtm1/g41mxe-rtm1-16m.rom
+      items:
+      - path: releases/g41mxe-rtm1/g41mxe-rtm1-16m.rom
+        sha256: 24567d0a88a38d6dc592263e169e177d9fdd39bda39b92a79e5fd25060e8aa83
+      sha256: a47927ac320508acb5d426b8f40265e1924b42e97204ca5bd5290cbe24ffb746
+    contract_content:
+      kind: contract-content-v1
+      items:
+      - role: RELEASE
+        contract_ids:
+        - rtm-baseline
+        sha256: 68c08307ebc11734be1b8e91a11a9c751a6d1e253fd769958270513b88cc716a
+      - role: SPEC
+        contract_ids:
+        - rtm-baseline
+        sha256: a905ec3d8eaa61dab440bf0e607766b797ad185541f14956565b5fd0f2a4deff
+      sha256: b4fcb472c2ae0188b0d25c2a01a4848532ef8c94c65c64cbbdcd34cb76ccba91
+    scope:
+      proposal_id: p-rtm1-baseline
+      changes: *id003
+      required_scenarios: *id001
+      docs_only: false
+    sha256: 5c065dca1af8e09ea1dec5a54f14b2d64d73064878dcbc4df2fef35ea3a96de5
+  recorded_at: '2026-09-30T16:40:33+00:00'
+  user_acknowledgement:
+    status: confirmed
+    basis: 本会话用户在 v6 写入后的直接反馈：这一版非常流畅，我认为可以作为RTM。仅认可原样镜像真实启动与 UI 流畅；不扩大到真机 Legacy/所有设置，不覆盖新布局重编译 ROM。
+    claim: Explicit acknowledgement was supplied to the CLI; the tool does not authenticate the speaker.
+migrations: []

@@ -1,0 +1,41 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = AsusSetupHiiDxe
+  FILE_GUID                      = 0EF49189-39AA-470F-A320-B9AB654EA83E
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = AsusSetupHiiEntryPoint
+
+[Sources]
+  AsusSetupHiiDxe.c
+  G41HiiSensors.c
+  G41HiiConfig.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+
+[LibraryClasses]
+  BaseMemoryLib
+  BaseLib
+  HiiLib
+  PrintLib
+  DebugLib
+  DxeServicesLib
+  MemoryAllocationLib
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  UefiDriverEntryPoint
+
+[Protocols]
+  gEfiHiiDatabaseProtocolGuid
+  gEfiHiiStringProtocolGuid
+  gEfiHiiConfigAccessProtocolGuid
+  gEfiHiiConfigRoutingProtocolGuid
+  gEfiDevicePathProtocolGuid
+
+[Guids]
+  gEfiGlobalVariableGuid
+
+[Depex]
+  gEfiHiiDatabaseProtocolGuid AND gEfiHiiStringProtocolGuid AND gEfiHiiConfigRoutingProtocolGuid

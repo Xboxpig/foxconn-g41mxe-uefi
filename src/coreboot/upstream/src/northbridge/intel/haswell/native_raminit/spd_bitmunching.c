@@ -1,0 +1,308 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
+#include <commonlib/bsd/clamp.h>
+#include <console/console.h>
+#include <device/dram/ddr3.h>
+#include <device/pci_ops.h>
+#include <device/smbus_host.h>
+#include <northbridge/intel/haswell/chip.h>
+#include <northbridge/intel/haswell/haswell.h>
+#include <northbridge/intel/haswell/raminit.h>
+#include <static.h>
+#include <string.h>
+#include <types.h>
+
+#include "raminit_native.h"
+
+static void get_spd_for_dimm(struct raminit_dimm_info *const dimm, const uint8_t *cbfs_spd)
+{
+	if (dimm->spd_addr == SPD_MEMORY_DOWN) {
+		if (cbfs_spd) {
+			memcpy(dimm->raw_spd, cbfs_spd, SPD_SIZE_MAX_DDR3);
+			dimm->valid = true;
+			printk(RAM_DEBUG, "memory-down\n");
+		} else {
+			printk(RAM_DEBUG, "memory-down but no CBFS SPD data, ignoring\n");
+		}
+		return;
+	}
+	printk(RAM_DEBUG, "slotted ");
+	const uint8_t spd_mem_type = smbus_read_byte(dimm->spd_addr, SPD_MEMORY_TYPE);
+	if (spd_mem_type != SPD_MEMORY_TYPE_SDRAM_DDR3) {
+		printk(RAM_DEBUG, "and not DDR3, ignoring\n");
+		return;
+	}
+	printk(RAM_DEBUG, "and DDR3\n");
+	if (i2c_eeprom_read(dimm->spd_addr, 0, SPD_SIZE_MAX_DDR3, dimm->raw_spd) != SPD_SIZE_MAX_DDR3) {
+		printk(BIOS_WARNING, "I2C block read failed, trying SMBus byte reads\n");
+		for (uint32_t i = 0; i < SPD_SIZE_MAX_DDR3; i++)
+			dimm->raw_spd[i] = smbus_read_byte(dimm->spd_addr, i);
+	}
+	dimm->valid = true;
+}
+
+static void get_spd_data(struct sysinfo *ctrl)
+{
+	const struct northbridge_intel_haswell_config *cfg = config_of_soc();
+	struct spd_info spdi = {0};
+	get_spd_info(&spdi, cfg);
+	const uint8_t *cbfs_spd = get_spd_from_cbfs(&spdi);
+	for (uint8_t channel = 0; channel < NUM_CHANNELS; channel++) {
+		for (uint8_t slot = 0; slot < NUM_SLOTS; slot++) {
+			struct raminit_dimm_info *const dimm = &ctrl->dimms[channel][slot];
+			dimm->spd_addr = spdi.addresses[NUM_SLOTS * channel + slot];
+			if (!dimm->spd_addr)
+				continue;
+
+			printk(RAM_DEBUG, "CH%uS%u is ", channel, slot);
+			get_spd_for_dimm(dimm, cbfs_spd);
+		}
+	}
+}
+
+static void decode_spd(struct raminit_dimm_info *const dimm)
+{
+	/** TODO: Hook up somewhere, and handle lack of XMP data **/
+	const bool enable_xmp = false;
+	memset(&dimm->data, 0, sizeof(dimm->data));
+	if (enable_xmp)
+		spd_xmp_decode_ddr3(&dimm->data, dimm->raw_spd, DDR3_XMP_PROFILE_1);
+	else
+		spd_decode_ddr3(&dimm->data, dimm->raw_spd);
+
+	if (CONFIG(DEBUG_RAM_SETUP))
+		dram_print_spd_ddr3(&dimm->data);
+}
+
+static enum raminit_status find_common_spd_parameters(struct sysinfo *ctrl)
+{
+	const union pci_capid0_a_reg capid0_a = {
+		.raw = pci_read_config32(HOST_BRIDGE, CAPID0_A)
+	};
+
+	ctrl->cas_supported = 0xffff;
+	ctrl->flags.raw = 0xffffffff;
+
+	ctrl->tCK  = 0;
+	ctrl->tAA  = 0;
+	ctrl->tWR  = 0;
+	ctrl->tRCD = 0;
+	ctrl->tRRD = 0;
+	ctrl->tRP  = 0;
+	ctrl->tRAS = 0;
+	ctrl->tRC  = 0;
+	ctrl->tRFC = 0;
+	ctrl->tWTR = 0;
+	ctrl->tRTP = 0;
+	ctrl->tFAW = 0;
+	ctrl->tCWL = 0;
+	ctrl->tCMD = 0;
+	ctrl->chanmap = 0;
+
+	bool yes_ecc = false;
+	bool not_ecc = false;
+
+	for (uint8_t channel = 0; channel < NUM_CHANNELS; channel++) {
+		ctrl->dpc[channel] = 0;
+		ctrl->rankmap[channel] = 0;
+		ctrl->rank_mirrored[channel] = 0;
+		ctrl->channel_size_mb[channel] = 0;
+		for (uint8_t slot = 0; slot < NUM_SLOTS; slot++) {
+			struct raminit_dimm_info *const dimm = &ctrl->dimms[channel][slot];
+			if (!dimm->valid)
+				continue;
+
+			printk(RAM_DEBUG, "\nCH%uS%u SPD:\n", channel, slot);
+			decode_spd(dimm);
+
+			ctrl->chanmap |= BIT(channel);
+			ctrl->dpc[channel]++;
+			ctrl->channel_size_mb[channel] += dimm->data.size_mb;
+
+			/* The first rank of a populated slot is always present */
+			const uint8_t rank = slot + slot;
+			assert(dimm->data.ranks);
+			ctrl->rankmap[channel] |= (BIT(dimm->data.ranks) - 1) << rank;
+
+			if (dimm->data.flags.pins_mirrored)
+				ctrl->rank_mirrored[channel] |= BIT(rank + 1);
+
+			/* Find common settings */
+			ctrl->cas_supported &= dimm->data.cas_supported;
+			ctrl->flags.raw &= dimm->data.flags.raw;
+			ctrl->tCK  = MAX(ctrl->tCK,  dimm->data.tCK);
+			ctrl->tAA  = MAX(ctrl->tAA,  dimm->data.tAA);
+			ctrl->tWR  = MAX(ctrl->tWR,  dimm->data.tWR);
+			ctrl->tRCD = MAX(ctrl->tRCD, dimm->data.tRCD);
+			ctrl->tRRD = MAX(ctrl->tRRD, dimm->data.tRRD);
+			ctrl->tRP  = MAX(ctrl->tRP,  dimm->data.tRP);
+			ctrl->tRAS = MAX(ctrl->tRAS, dimm->data.tRAS);
+			ctrl->tRC  = MAX(ctrl->tRC,  dimm->data.tRC);
+			ctrl->tRFC = MAX(ctrl->tRFC, dimm->data.tRFC);
+			ctrl->tWTR = MAX(ctrl->tWTR, dimm->data.tWTR);
+			ctrl->tRTP = MAX(ctrl->tRTP, dimm->data.tRTP);
+			ctrl->tFAW = MAX(ctrl->tFAW, dimm->data.tFAW);
+			ctrl->tCWL = MAX(ctrl->tCWL, dimm->data.tCWL);
+			ctrl->tCMD = MAX(ctrl->tCMD, dimm->data.tCMD);
+
+			yes_ecc |=  dimm->data.flags.is_ecc;
+			not_ecc |= !dimm->data.flags.is_ecc;
+		}
+	}
+
+	if (!ctrl->chanmap) {
+		printk(BIOS_ERR, "No DIMMs were found\n");
+		return RAMINIT_STATUS_NO_MEMORY_INSTALLED;
+	}
+	if (!ctrl->cas_supported) {
+		printk(BIOS_ERR, "Could not resolve common CAS latency\n");
+		return RAMINIT_STATUS_UNSUPPORTED_MEMORY;
+	}
+
+	/* At least one DIMM exists */
+	assert(yes_ecc || not_ecc);
+
+	/* FDEE overrides ECCDIS */
+	const bool ecc_force = capid0_a.FDEE;
+	const bool ecc_avail = !capid0_a.ECCDIS || ecc_force;
+
+	printk(BIOS_INFO, "According to CAPID0, ECC capability is %s\n",
+	       ecc_force ? "forced" : (ecc_avail ? "available" : "disabled"));
+
+	if (ecc_force && not_ecc) {
+		printk(BIOS_ERR, "ECC forced by CAPID, but non-ECC DIMMs present\n");
+		return RAMINIT_STATUS_UNSUPPORTED_MEMORY;
+	}
+
+	if (yes_ecc && not_ecc) {
+		/* ECC UDIMMs can be operated as non-ECC, ignoring the ECC lane */
+		printk(BIOS_WARNING, "Both ECC and non-ECC DIMMs present, ECC unusable\n");
+	}
+	if (!ecc_avail && yes_ecc) {
+		/* We can still continue with ECC disabled */
+		printk(BIOS_WARNING, "ECC disabled by CAPID, but ECC DIMMs present\n");
+	}
+
+	const bool all_ecc_dimms = yes_ecc && !not_ecc;
+	ctrl->is_ecc = ecc_avail && all_ecc_dimms;
+
+	printk(BIOS_INFO, "ECC is %sabled\n", ctrl->is_ecc ? "en" : "dis");
+
+	ctrl->lanes = ctrl->is_ecc ? NUM_LANES : NUM_LANES_NO_ECC;
+
+	/** TODO: Complete LPDDR support **/
+	ctrl->lpddr = false;
+
+	return RAMINIT_STATUS_SUCCESS;
+}
+
+enum raminit_status collect_spd_info(struct sysinfo *ctrl)
+{
+	get_spd_data(ctrl);
+	return find_common_spd_parameters(ctrl);
+}
+
+#define MIN_CWL		5
+#define MAX_CWL		12
+
+/* Except for tCK, hardware expects all timing values in DCLKs, not nanoseconds */
+enum raminit_status convert_timings(struct sysinfo *ctrl)
+{
+	/*
+	 * Obtain all required timing values, in DCLKs.
+	 */
+
+	/* Convert primary timings from nanoseconds to DCLKs */
+	ctrl->tAA  = DIV_ROUND_UP(ctrl->tAA,  ctrl->tCK);
+	ctrl->tWR  = DIV_ROUND_UP(ctrl->tWR,  ctrl->tCK);
+	ctrl->tRCD = DIV_ROUND_UP(ctrl->tRCD, ctrl->tCK);
+	ctrl->tRRD = DIV_ROUND_UP(ctrl->tRRD, ctrl->tCK);
+	ctrl->tRP  = DIV_ROUND_UP(ctrl->tRP,  ctrl->tCK);
+	ctrl->tRAS = DIV_ROUND_UP(ctrl->tRAS, ctrl->tCK);
+	ctrl->tRC  = DIV_ROUND_UP(ctrl->tRC,  ctrl->tCK);
+	ctrl->tRFC = DIV_ROUND_UP(ctrl->tRFC, ctrl->tCK);
+	ctrl->tWTR = DIV_ROUND_UP(ctrl->tWTR, ctrl->tCK);
+	ctrl->tRTP = DIV_ROUND_UP(ctrl->tRTP, ctrl->tCK);
+	ctrl->tFAW = DIV_ROUND_UP(ctrl->tFAW, ctrl->tCK);
+	ctrl->tCWL = DIV_ROUND_UP(ctrl->tCWL, ctrl->tCK);
+	ctrl->tCMD = DIV_ROUND_UP(ctrl->tCMD, ctrl->tCK);
+
+	/* Constrain primary timings to hardware limits */
+	/** TODO: complain when clamping? **/
+	ctrl->tAA  = clamp_u32(4,  ctrl->tAA,  24);
+	ctrl->tWR  = clamp_u32(5,  ctrl->tWR,  16);
+	ctrl->tRCD = clamp_u32(4,  ctrl->tRCD, 20);
+	ctrl->tRRD = clamp_u32(4,  ctrl->tRRD, 65535);
+	ctrl->tRP  = clamp_u32(4,  ctrl->tRP,  15);
+	ctrl->tRAS = clamp_u32(10, ctrl->tRAS, 40);
+	ctrl->tRC  = clamp_u32(1,  ctrl->tRC,  4095);
+	ctrl->tRFC = clamp_u32(1,  ctrl->tRFC, 511);
+	ctrl->tWTR = clamp_u32(4,  ctrl->tWTR, 10);
+	ctrl->tRTP = clamp_u32(4,  ctrl->tRTP, 15);
+	ctrl->tFAW = clamp_u32(10, ctrl->tFAW, 54);
+
+	/** TODO: Honor tREFI from XMP **/
+	ctrl->tREFI = get_tREFI(ctrl->mem_clock_mhz);
+	ctrl->tXP   =   get_tXP(ctrl->mem_clock_mhz);
+
+	/*
+	 * Check some values, and adjust them if necessary.
+	 */
+
+	/* If tWR cannot be written into DDR3 MR0, adjust it */
+	switch (ctrl->tWR) {
+	case  9:
+	case 11:
+	case 13:
+	case 15:
+		ctrl->tWR++;
+	}
+
+	/* If tCWL is not supported or unspecified, look up a reasonable default */
+	if (ctrl->tCWL < MIN_CWL || ctrl->tCWL > MAX_CWL)
+		ctrl->tCWL = get_tCWL(ctrl->mem_clock_mhz);
+
+	/* This is needed to support ODT properly on 2DPC */
+	if (ctrl->tAA - ctrl->tCWL > 4)
+		ctrl->tCWL = ctrl->tAA - 4;
+
+	const union pci_capid0_a_reg capid0_a = {
+		.raw = pci_read_config32(HOST_BRIDGE, CAPID0_A)
+	};
+	const uint32_t min_tCMD = capid0_a.D1NM ? 2 : 1;
+
+	/* tCMD is only available in XMP profiles */
+	if (!ctrl->tCMD) {
+		const uint8_t dpc = MAX(ctrl->dpc[0], ctrl->dpc[1]);
+		ctrl->tCMD = get_tCMD(ctrl->mem_clock_mhz, dpc);
+	}
+	ctrl->tCMD = clamp_u32(min_tCMD, ctrl->tCMD, 3);
+
+	/*
+	 * Print final timings.
+	 */
+
+	/* tCK is special */
+	printk(BIOS_DEBUG, "Selected tCK          : %u ps\n", ctrl->tCK * 1000 / 256);
+
+	/* Primary timings */
+	printk(BIOS_DEBUG, "Selected tAA          : %uT\n", ctrl->tAA);
+	printk(BIOS_DEBUG, "Selected tWR          : %uT\n", ctrl->tWR);
+	printk(BIOS_DEBUG, "Selected tRCD         : %uT\n", ctrl->tRCD);
+	printk(BIOS_DEBUG, "Selected tRRD         : %uT\n", ctrl->tRRD);
+	printk(BIOS_DEBUG, "Selected tRP          : %uT\n", ctrl->tRP);
+	printk(BIOS_DEBUG, "Selected tRAS         : %uT\n", ctrl->tRAS);
+	printk(BIOS_DEBUG, "Selected tRC          : %uT\n", ctrl->tRC);
+	printk(BIOS_DEBUG, "Selected tRFC         : %uT\n", ctrl->tRFC);
+	printk(BIOS_DEBUG, "Selected tWTR         : %uT\n", ctrl->tWTR);
+	printk(BIOS_DEBUG, "Selected tRTP         : %uT\n", ctrl->tRTP);
+	printk(BIOS_DEBUG, "Selected tFAW         : %uT\n", ctrl->tFAW);
+	printk(BIOS_DEBUG, "Selected tCWL         : %uT\n", ctrl->tCWL);
+	printk(BIOS_DEBUG, "Selected tCMD         : %uT\n", ctrl->tCMD);
+
+	/* Derived timings */
+	printk(BIOS_DEBUG, "Selected tREFI        : %uT\n", ctrl->tREFI);
+	printk(BIOS_DEBUG, "Selected tXP          : %uT\n", ctrl->tXP);
+
+	return RAMINIT_STATUS_SUCCESS;
+}

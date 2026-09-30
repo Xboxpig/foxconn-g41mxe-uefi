@@ -1,0 +1,72 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config BOARD_APPLE_I945_MACS_COMMON
+	bool
+	select CPU_INTEL_SOCKET_M
+	select NORTHBRIDGE_INTEL_I945
+	select NORTHBRIDGE_INTEL_SUBTYPE_I945GM
+	select SOUTHBRIDGE_INTEL_I82801GX
+	select NO_UART_ON_SUPERIO
+	select EC_ACPI
+	select HAVE_OPTION_TABLE
+	select HAVE_CMOS_DEFAULT
+	select HAVE_MP_TABLE
+	select BOARD_ROMSIZE_KB_2048
+	select INTEL_INT15
+	select HAVE_ACPI_TABLES
+	select HAVE_ACPI_RESUME
+
+config BOARD_APPLE_MACBOOK11
+	bool
+	select BOARD_APPLE_I945_MACS_COMMON
+	select SYSTEM_TYPE_LAPTOP
+
+config BOARD_APPLE_MACBOOK21
+	bool
+	select BOARD_APPLE_I945_MACS_COMMON
+	select SYSTEM_TYPE_LAPTOP
+
+config BOARD_APPLE_IMAC41
+	bool
+	select BOARD_APPLE_I945_MACS_COMMON
+#	select VGA_BIOS
+
+config BOARD_APPLE_IMAC52
+	bool
+	select BOARD_APPLE_I945_MACS_COMMON
+
+if BOARD_APPLE_I945_MACS_COMMON
+
+config MAINBOARD_DIR
+	default "apple/i945_macs"
+
+config MAINBOARD_PART_NUMBER
+	default "Macbook1,1" if BOARD_APPLE_MACBOOK11
+	default "MacBook2,1" if BOARD_APPLE_MACBOOK21
+	default "iMac4,1" if BOARD_APPLE_IMAC41
+	default "iMac5,2" if BOARD_APPLE_IMAC52
+
+config VARIANT_DIR
+	default "macbook1_1" if BOARD_APPLE_MACBOOK11
+	default "macbook2_1" if BOARD_APPLE_MACBOOK21
+	default "imac4_1" if BOARD_APPLE_IMAC41
+	default "imac5_2" if BOARD_APPLE_IMAC52
+
+config OVERRIDE_DEVICETREE
+	default "variants/\$(CONFIG_VARIANT_DIR)/overridetree.cb"
+
+config MAX_CPUS
+	default 2
+
+config MAINBOARD_SMBIOS_MANUFACTURER
+	default "Apple Inc."
+
+endif
+
+if BOARD_APPLE_IMAC41
+
+config VGA_BIOS_ID
+	string
+	default "1002,71c5"
+
+endif

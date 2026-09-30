@@ -1,0 +1,70 @@
+# 0.3.0
+
+1. An official build from ChromeOS version 16093.0.0.
+   Protocol (params header) version: 3
+
+# 0.4.0
+
+1. An official build from ChromeOS version 16117.0.0.
+   Protocol (params header) version: 4
+
+2. Included changes:
+
+- CL:*7518650 mt8196: SLC: Port SLC driver
+- CL:*7842174 mtk-dramk/mt8196: Sync to MediaTek's preloader version 20241121
+
+# 16174.34.0
+
+1. An official build from ChromeOS version 16174.34.0.
+
+2. Included changes:
+
+- CL:*8030082 mt8196: EMI: Add EMI clock pre setting and post setting
+
+# 16174.54.0
+
+1. An official build from ChromeOS version 16174.54.0.
+
+2. Included changes:
+
+- CL:*8072489 mt8196: EMI: Clear EMIPLL clock setting enable register
+- CL:*8046129 mt8196: SLC: Prohibit the APMCU from continuously pulling ultra
+
+# 16174.61.0
+
+1. An official build from ChromeOS version 16174.61.0.
+
+2. Included changes:
+
+- CL:*8100568 Add build version info
+- CL:*8096629 mt8196: EMI: Adjust the mapping between DVFS gear levels and DRAM frequency
+
+# 16486.0.0
+
+1. An official build from ChromeOS version 16486.0.0.
+
+2. Included changes:
+
+- CL:*8361678: mtk-dramk/mt8196: Add support for maximum DDR frequency up to 9600Mbps
+- CL:*8721978: mtk-dramk/mt8196: Add efuse segment code read function
+- CL:*8721979: mtk-dramk/mt8196: Support DDR9600 based on efuse segment code
+- CL:*8746442: mt8196: Adjust the mapping between DVFS gear levels and DRAM frequency
+
+# 16514.0.0
+
+1. An official build from ChromeOS version 16514.0.0.
+   Protocol (params header) version: 5
+
+2. Included changes:
+
+- CL:*8795263 mtk-dramk/mt8196: Fix DRAM fast calibration issue
+- CL:*8813496 mtk-dramk/mt8196: Set VCORE DVFS flag for DDR 9600Mbps
+
+# 16727.0.0
+
+1. An official build from ChromeOS version 16727.0.0.
+
+2. Included changes:
+
+- CL:*9349921 mtk-dramk/mt8196: Replace SUPPORT_DDR9600 with runtime check
+- CL:*9373944 mtk-dramk/mt8196: Disable EDVFSC for LP5

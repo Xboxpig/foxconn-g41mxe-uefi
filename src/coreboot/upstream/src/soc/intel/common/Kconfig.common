@@ -1,0 +1,268 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config INTEL_HAS_TOP_SWAP
+	bool
+	help
+	  Set this config if the Intel SoC supports top swap feature
+
+if INTEL_HAS_TOP_SWAP
+
+config INTEL_ADD_TOP_SWAP_BOOTBLOCK
+	bool "Include a Top swap bootblock"
+	default n
+	help
+	  Intel PCH/Southbridges have feature that it is possible to have
+	  the southbridge/PCH look for the bootblock at a 64K or
+	  128K/256K/512K/1MB (in case of newer SoCs) offset
+	  instead of the usual top of flash.
+	  Select this to put a 'second' bootblock.
+
+config INTEL_TOP_SWAP_BOOTBLOCK_SIZE
+	hex "Size of top swap boot block"
+	depends on INTEL_ADD_TOP_SWAP_BOOTBLOCK
+	default 0x10000
+	help
+	  Set this config to a supported topswap size.
+	  Valid sizes: 0x10000/0x20000/0x40000/0x80000/0x100000/
+	  0x200000/0x400000/0x800000. The maximum size
+	  varies depending on the platform.
+
+config INTEL_IFD_SET_TOP_SWAP_BOOTBLOCK_SIZE
+	bool "Replace the TSBS value with INTEL_TOP_SWAP_BOOTBLOCK_SIZE"
+	default n
+	depends on HAVE_IFD_BIN
+	help
+	  Set to use ifdtool to replace the Top Swap Block Size
+	  PCH strap value in the Intel Firmware Descriptor
+	  with INTEL_TOP_SWAP_BOOTBLOCK_SIZE
+
+
+config INTEL_TOP_SWAP_FIT_ENTRY_FMAP_REG
+	string
+	depends on INTEL_ADD_TOP_SWAP_BOOTBLOCK
+	help
+	  Use this config to specify the name of a FMAP region (which should
+	  hold a microcode) whose address as the first entry in the topswap FIT.
+	  This is useful in creating a asymmetric FIT in top swap bootblock
+	  than the one in non-topswap bootblock. This string will be passed
+	  onto ifittool (-A -n option). ifittool will not parse the region for MCU
+	  entries, and only locate the region and insert its address into FIT.
+
+config INTEL_TOP_SWAP_SEPARATE_REGIONS
+	bool "Place the regular and Top Swap bootblocks in separate fmap regions"
+	depends on INTEL_ADD_TOP_SWAP_BOOTBLOCK && BOOTBLOCK_IN_CBFS
+	default n
+	help
+	  Place the bootblocks in BOOTBLOCK and BOOTBLOCK_B regions for easy access, to
+	  facilitate firmware updates using the Top Swap as Slot A/Slot B redundancy.
+	  Requires a custom .fmd with the regions added at the end.
+
+config INTEL_TOP_SWAP_OPTION_CONTROL
+	bool "Toggle the Top Swap functionality using a CMOS option"
+	depends on INTEL_TOP_SWAP_SEPARATE_REGIONS && USE_OPTION_TABLE && SOC_INTEL_ALDERLAKE
+	default n
+	help
+	  Switch between the Top Swap bootblocks using the "attempt_slot_b" CMOS
+	  option. Note that the option must be present in the board's cmos.layout.
+	  file.
+
+config TOP_SWAP_REDUNDANCY
+	bool "Toggle the Intel Top Swap - based redundancy"
+	depends on HAVE_OPTION_TABLE && INTEL_HAS_TOP_SWAP
+	select INTEL_ADD_TOP_SWAP_BOOTBLOCK
+	select MAINBOARD_NEEDS_CMOS_OPTIONS
+	select INTEL_TOP_SWAP_SEPARATE_REGIONS
+	select INTEL_TOP_SWAP_OPTION_CONTROL
+	help
+	  Toggle the Intel Top Swap based redundancy, where the BOOTBLOCK and COREBOOT
+	  regions form a read-only golden copy and BOOTBLOCK_B and COREBOOT_B are an
+	  update partition. CMOS option "attempt_top_swap" decides which of the slots
+	  gets booted, which means the platform can be reverted to the known-good copy
+	  via CMOS reset.
+
+endif
+
+config SOC_INTEL_COMMON
+	bool
+	select AZALIA_HDA_CODEC_SUPPORT
+	select ACPI_SOC_NVS
+	help
+	  common code for Intel SOCs
+
+if SOC_INTEL_COMMON
+
+comment "Intel SoC Common Code for IP blocks"
+source "src/soc/intel/common/block/Kconfig"
+
+comment "Intel SoC Common Code for features"
+source "src/soc/intel/common/feature/Kconfig"
+
+comment "Intel SoC Common PCH Code"
+source "src/soc/intel/common/pch/Kconfig"
+
+comment "Intel SoC Common coreboot stages and non-IP blocks"
+source "src/soc/intel/common/basecode/Kconfig"
+
+config SOC_INTEL_COMMON_RESET
+	bool
+	default n
+	select HAVE_CF9_RESET
+
+config SOC_INTEL_COMMON_ACPI_WAKE_SOURCE
+	bool
+	default n
+
+config ACPI_CONSOLE
+	bool
+	default n
+	help
+	  Provide a mechanism for serial console based ACPI debug.
+
+config SOC_INTEL_COMMON_ACPI_BDAT
+	bool
+	default n
+	select ACPI_BDAT
+	help
+	  Export BIOS Data to ACPI space.
+
+config SOC_INTEL_RMT_PLUS_COMMON
+	bool
+	select SOC_INTEL_COMMON_ACPI_BDAT
+
+config SOC_INTEL_RMT_PLUS_SUPPORTED
+	bool
+
+# Mainboards may select one RMT+ default helper to choose the default mode.
+# Do not select more than one helper. If both helpers are selected, Kconfig
+# uses the first matching choice default and selects always-on RMT+.
+config SOC_INTEL_RMT_PLUS_ALWAYS_DEFAULT
+	bool
+
+config SOC_INTEL_RMT_PLUS_IN_DEV_MODE_DEFAULT
+	bool
+
+choice
+	prompt "Intel RMT+ mode"
+	depends on SOC_INTEL_RMT_PLUS_SUPPORTED
+	default SOC_INTEL_RMT_PLUS if SOC_INTEL_RMT_PLUS_ALWAYS_DEFAULT
+	default SOC_INTEL_RMT_PLUS_IN_DEV_MODE if SOC_INTEL_RMT_PLUS_IN_DEV_MODE_DEFAULT
+	default SOC_INTEL_RMT_PLUS_DISABLED
+	help
+	  Select how Intel RMT+ is enabled when a platform supports the
+	  required FSP-M UPDs.
+
+config SOC_INTEL_RMT_PLUS_DISABLED
+	bool "Disabled"
+
+config SOC_INTEL_RMT_PLUS
+	bool "Always enable"
+	select SOC_INTEL_RMT_PLUS_COMMON
+	help
+	  Intel RMT+ (Rank Margin Test Plus) is a FSP-M memory training
+	  feature that exports rank margin data through BDAT HOBs. With this
+	  option selected, coreboot enables RMT+ unconditionally when memory
+	  training runs.
+
+config SOC_INTEL_RMT_PLUS_IN_DEV_MODE
+	bool "Developer mode only"
+	select SOC_INTEL_RMT_PLUS_COMMON
+	help
+	  Intel RMT+ (Rank Margin Test Plus) is a FSP-M memory training
+	  feature that exports rank margin data through BDAT HOBs. With this
+	  option selected, coreboot enables RMT+ only when booting in
+	  developer mode. If vboot is not enabled, developer mode is never
+	  reported and RMT+ is not enabled.
+
+endchoice
+
+config PAVP
+	bool "Enable PAVP (Protected Audio-Video Path) support"
+	default y
+	help
+	  Protected Audio-Video Path is an Intel technology used to enforce digital
+	  rights protections on multimedia content. Streaming or other media playback
+	  services may require it to be enabled for correct functioning.
+
+	  Users might disable PAVP if the concept of digital rights management (DRM)
+	  offends them, or if they have concerns about the security of
+	  the Management Engine, which is where this technology is implemented.
+
+	  Set this option to n to disable support.
+
+config MMA
+	bool "Enable MMA (Memory Margin Analysis) support for Intel Core"
+	default n
+	depends on SOC_INTEL_KABYLAKE || SOC_INTEL_SKYLAKE
+	help
+	 Set this option to y to enable MMA (Memory Margin Analysis) support
+
+config MMA_BLOBS_PATH
+	string "Path to MMA blobs"
+	depends on MMA
+	default "3rdparty/blobs/soc/intel/kabylake/mma-blobs" if SOC_INTEL_KABYLAKE
+	default "3rdparty/blobs/soc/intel/skylake/mma-blobs" if SOC_INTEL_SKYLAKE
+
+config SOC_INTEL_COMMON_NHLT
+	bool
+	default n
+
+config TPM_TIS_ACPI_INTERRUPT
+	int
+	help
+	  acpi_get_gpe() is used to provide interrupt status to TPM layer.
+	  This option specifies the GPE number.
+
+config SOC_INTEL_DEBUG_CONSENT
+	bool "Enable SOC debug interface"
+	default n
+	help
+	  Set this option to enable default debug interface of SoC such as DBC
+	  or DCI.
+
+config HAVE_INTEL_COMPLIANCE_TEST_MODE
+	def_bool n
+
+config SOC_INTEL_COMPLIANCE_TEST_MODE
+	bool "Enable SoC hardware compliance test mode"
+	depends on HAVE_INTEL_COMPLIANCE_TEST_MODE
+	default n
+	help
+	  Set this option to configure hardware components in a way
+	  that supports compliance testing activities for various
+	  components such PCIe or USB. For example, PCI express
+	  implementation must comply with the hardware PCIe
+	  specification requirements: Electrical, Configuration, Link
+	  Protocol and Transaction Protocol. The hardware must be
+	  configured in a particular state to run the compliance
+	  tests: some feature related to power management needs to be
+	  turned off, hot plug should be enabled...
+
+config SMM_MODULE_STACK_SIZE
+	hex
+	default 0x800
+
+config SOC_INTEL_CRASHLOG
+	def_bool n
+	select SOC_INTEL_COMMON_BLOCK_CRASHLOG
+	select ACPI_BERT
+	help
+	  Enables Crashlog.
+
+config SOC_INTEL_CRASHLOG_ON_RESET
+	def_bool n
+	help
+	  Enables the PMC to collect crashlog records on every reset event. NOTE:
+	  This will result in a BERT table being populated containing a PMC
+	  crashlog record on every boot.
+
+config HAS_INTEL_CPU_ROOT_PORTS
+	def_bool n
+	help
+	  Enables helper functions for CPU root ports alongside PCH root ports.
+
+config SOC_INTEL_IOE_DIE_SUPPORT
+	def_bool n
+	help
+	  Enable this config if the SOC support IOE DIE.
+
+endif # SOC_INTEL_COMMON

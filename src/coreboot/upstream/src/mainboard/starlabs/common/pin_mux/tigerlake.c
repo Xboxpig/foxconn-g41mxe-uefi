@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#include <fsp/api.h>
+#include <common/pin_mux.h>
+
+void configure_pin_mux(FSP_S_CONFIG *supd)
+{
+	supd->SerialIoUartRxPinMuxPolicy[0] = 0x190B0208;
+	supd->SerialIoUartTxPinMuxPolicy[0] = 0x190B1209;
+	supd->SerialIoUartRtsPinMuxPolicy[0] = 0x190B220a;
+	supd->SerialIoUartCtsPinMuxPolicy[0] = 0x190B320b;
+}

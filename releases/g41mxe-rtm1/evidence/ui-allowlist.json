@@ -1,0 +1,125 @@
+[
+  {
+    "qid": "0x2a0",
+    "store": "0x7e01",
+    "offset": "0x0",
+    "consumer": "eist"
+  },
+  {
+    "qid": "0x281",
+    "store": "0x7e01",
+    "offset": "0x1",
+    "consumer": "vmx"
+  },
+  {
+    "qid": "0x2755",
+    "store": "0x7e01",
+    "offset": "0x2",
+    "consumer": "gfx_uma_size"
+  },
+  {
+    "qid": "0x2779",
+    "store": "0x7e01",
+    "offset": "0x3",
+    "consumer": "sata_mode"
+  },
+  {
+    "qid": "0x1071",
+    "store": "0x7e01",
+    "offset": "0x4",
+    "consumer": "pata_controller"
+  },
+  {
+    "qid": "0xc22",
+    "store": "0x7e01",
+    "offset": "0x5",
+    "consumer": "hd_audio"
+  },
+  {
+    "qid": "0x75a",
+    "store": "0x7e01",
+    "offset": "0x6",
+    "consumer": "onboard_lan"
+  },
+  {
+    "qid": "0x2bc2",
+    "store": "0x7e01",
+    "offset": "0x7",
+    "consumer": "power_on_after_fail"
+  },
+  {
+    "qid": "0x107d",
+    "store": "0x7e01",
+    "offset": "0x8",
+    "consumer": "post_success_beep"
+  },
+  {
+    "qid": "0xe00",
+    "store": "0x7e01",
+    "offset": "0x9",
+    "consumer": "nmi"
+  },
+  {
+    "qid": "0x3c8",
+    "store": "0x7e01",
+    "offset": "0xa",
+    "consumer": "memory_fast_boot"
+  },
+  {
+    "qid": "0x29d4",
+    "store": "0x7e01",
+    "offset": "0xb",
+    "consumer": "csm_enable"
+  },
+  {
+    "qid": "0x1079",
+    "store": "0x7e01",
+    "offset": "0xc",
+    "consumer": "boot_device_control"
+  },
+  {
+    "qid": "0x3a4",
+    "store": "0x16",
+    "offset": "0x18e"
+  },
+  {
+    "qid": "0x285a",
+    "store": "0x22",
+    "offset": "0x0"
+  },
+  {
+    "qid": "0x2862",
+    "store": "0x22",
+    "offset": "0x8"
+  },
+  {
+    "qid": "0x28cf",
+    "store": "0x22",
+    "offset": "0x18"
+  },
+  {
+    "qid": "0x28d7",
+    "store": "0x22",
+    "offset": "0x20"
+  },
+  {
+    "qid": "0x1064",
+    "store": "0x8",
+    "offset": "0x0"
+  },
+  {
+    "qid": "0x109e",
+    "store": "0x0",
+    "offset": "0xffff"
+  },
+  {
+    "qid": "0x109f",
+    "store": "0x0",
+    "offset": "0xffff"
+  },
+  {
+    "qid": "0x10a0",
+    "store": "0x0",
+    "offset": "0xffff"
+  }
+]

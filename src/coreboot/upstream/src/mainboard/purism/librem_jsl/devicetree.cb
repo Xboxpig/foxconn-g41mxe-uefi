@@ -1,0 +1,145 @@
+chip soc/intel/jasperlake
+
+	register "eist_enable" = "true"
+	register "s0ix_enable" = "false"
+
+	register "SaGv" = "SaGv_Enabled"
+
+	register "AcousticNoiseMitigation" = "1"
+
+	register "FastPkgCRampDisable" = "1"
+
+	register "SlowSlewRate" = "3"
+
+	# TCC limit of 60 C (passively cooled tablet)
+	register "tcc_offset" = "40"
+
+	register "power_limits_config[JSL_N5100_6W_CORE]" = "{
+		.tdp_pl1_override = 5,
+		.tdp_pl2_override = 12,
+	}"
+
+	register "pmc_gpe0_dw0" = "PMC_GPP_F"
+	register "pmc_gpe0_dw1" = "PMC_GPP_D"
+	register "pmc_gpe0_dw2" = "PMC_GPD"
+
+	register "SerialIoI2cMode" = "{
+		[PchSerialIoIndexI2C0]  = PchSerialIoDisabled,
+		[PchSerialIoIndexI2C1]  = PchSerialIoDisabled,
+		[PchSerialIoIndexI2C2]  = PchSerialIoPci,
+		[PchSerialIoIndexI2C3]  = PchSerialIoPci,
+		[PchSerialIoIndexI2C4]  = PchSerialIoDisabled,
+		[PchSerialIoIndexI2C5]  = PchSerialIoDisabled,
+	}"
+
+	register "SerialIoUartMode[2]" = "PchSerialIoSkipInit"
+
+	# Audio related configurations
+	register "PchHdaDspEnable" = "true"
+	register "PchHdaAudioLinkHdaEnable" = "1"
+
+	device domain 0 on
+		device ref igpu on end
+		device ref dptf on end
+		device ref ipu on end
+		device ref south_xhci on
+			register "usb2_ports[0]" = "USB2_PORT_MID(OC_SKIP)" # Fingerprint reader
+			register "usb2_ports[1]" = "USB2_PORT_MID(OC_SKIP)" # microSD
+			register "usb2_ports[2]" = "USB2_PORT_MID(OC_SKIP)" # Type-C 1
+			register "usb2_ports[3]" = "USB2_PORT_MID(OC_SKIP)" # Type-C 2
+			register "usb2_ports[4]" = "USB2_PORT_EMPTY"
+			register "usb2_ports[5]" = "USB2_PORT_MID(OC_SKIP)" # Internal hub - front and rear cameras
+			register "usb2_ports[6]" = "USB2_PORT_MID(OC_SKIP)" # Dock pogo pins
+			register "usb2_ports[7]" = "USB2_PORT_MID(OC_SKIP)" # WLAN module
+			register "usb3_ports[0]" = "USB3_PORT_DEFAULT(OC_SKIP)"	# Type-C Port 2
+			register "usb3_ports[1]" = "USB3_PORT_DEFAULT(OC_SKIP)"	# Type-C Port 1
+
+			chip drivers/usb/acpi
+				device ref xhci_root_hub on
+					chip drivers/usb/acpi
+						register "desc" = ""Fingerprint Reader""
+						register "type" = "UPC_TYPE_INTERNAL"
+						device ref usb2_port1 on end
+					end
+					chip drivers/usb/acpi
+						register "desc" = ""microSD Card Reader""
+						register "type" = "UPC_TYPE_INTERNAL"
+						device ref usb2_port2 on end
+					end
+					chip drivers/usb/acpi
+						register "desc" = ""Type-C Port 1""
+						register "type" = "UPC_TYPE_C_USB2_SS_SWITCH"
+						register "group" = "ACPI_PLD_GROUP(0, 0)"
+						device ref usb2_port3 on end
+					end
+					chip drivers/usb/acpi
+						register "desc" = ""Type-C Port 2""
+						register "type" = "UPC_TYPE_C_USB2_SS_SWITCH"
+						register "group" = "ACPI_PLD_GROUP(0, 1)"
+						device ref usb2_port4 on end
+					end
+					chip drivers/usb/acpi
+						register "desc" = ""Cameras""
+						register "type" = "UPC_TYPE_INTERNAL"
+						device ref usb2_port6 on end
+					end
+					chip drivers/usb/acpi
+						register "desc" = ""Keyboard Dock""
+						register "type" = "UPC_TYPE_PROPRIETARY"
+						device ref usb2_port7 on end
+					end
+					chip drivers/usb/acpi
+						register "desc" = ""Bluetooth""
+						register "type" = "UPC_TYPE_INTERNAL"
+						device ref usb2_port8 on end
+					end
+					chip drivers/usb/acpi
+						register "desc" = ""Type-C Port 2""
+						register "type" = "UPC_TYPE_C_USB2_SS_SWITCH"
+						register "group" = "ACPI_PLD_GROUP(0, 1)"
+						device ref usb3_port1 on end
+					end
+					chip drivers/usb/acpi
+						register "desc" = ""Type-C Port 1""
+						register "type" = "UPC_TYPE_C_USB2_SS_SWITCH"
+						register "group" = "ACPI_PLD_GROUP(0, 0)"
+						device ref usb3_port2 on end
+					end
+				end
+			end
+		end
+		device ref shared_ram on end
+		device ref cnvi_wifi on
+			chip drivers/wifi/generic
+				device generic 0 on end
+			end
+		end
+		device ref i2c2 on
+			chip drivers/i2c/hid
+				register "generic.hid" = ""GXTP7380""
+				register "generic.cid" = ""PNP0C50""
+				register "generic.desc" = ""Touchscreen""
+				register "generic.irq_gpio" = "ACPI_GPIO_IRQ_LEVEL_LOW(GPP_C12)"
+				register "generic.reset_gpio" = "ACPI_GPIO_OUTPUT_ACTIVE_LOW(GPP_D6)"
+				register "hid_desc_reg_offset" = "1"
+				device i2c 5d on end
+			end
+		end
+		device ref i2c3 on
+			chip drivers/i2c/generic
+				register "hid" = ""MXC6655""
+				register "cid" = ""MXC6655""
+				register "desc" = ""Accelerometer""
+				register "irq_gpio" = "ACPI_GPIO_IRQ_LEVEL_LOW(GPP_E1)"
+				device i2c 15 on end
+			end
+		end
+		device ref i2c4 on end
+		device ref pcie_rp3 on
+			register "PcieClkSrcUsage[0]" = "2"
+			register "PcieClkSrcClkReq[0]" = "0"
+			smbios_slot_desc "SlotTypeM2Socket3" "SlotLengthOther" "M.2/M 2280" "SlotDataBusWidth2X"
+		end
+		device ref hda on end
+	end
+end

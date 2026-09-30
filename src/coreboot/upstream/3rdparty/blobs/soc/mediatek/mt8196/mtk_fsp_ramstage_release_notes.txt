@@ -1,0 +1,92 @@
+# 16733.0.0
+
+1. An official build from ChromeOS version 16733.0.0.
+
+2. Included changes:
+
+- CL:*9358760 mt8196: Document Kraken image memory layout and boundary safety
+- CL:*9351602 mt8196/kraken_v3: Add bounds checking for section and payload offsets
+- CL:*9350801 common/assert: Halt execution on assertion failure
+- CL:*9351220 mt8196/kraken_v3: Fix kraken integer overflow in destination size check
+- CL:*9296500 mt8196: Synchronize secure-dynamic-cma permission with secure-cma
+- CL:*9231738 smpu: Optimize permission initialization for memory and speed
+- CL:*9239421 dapc: Standardize on fast initialization using full-register writes
+- CL:*9231737 smpu: Implement hardware setting dump function
+- CL:*9278923 smpu: Rename AID_PERM_TABEL to AID_PERM_TABLE
+- CL:*9238560 mt8196: Change access permission from RW to RO for protected GPU
+- CL:*9076436 mt8196: Fix GCE DAPC violations for MMINFRA_APB_S-2 and MMINFRA_APB_S-3
+
+# 16605.0.0
+
+1. An official build from ChromeOS version 16605.0.0.
+
+2. Included changes:
+
+- CL:*9042978 mt8196: Add GCE DAPC permission for display pipeline
+- CL:*8996999 mt8196: Fix GCE DAPC violations for DISP_APB_S-11
+
+# 16555.0.0
+
+1. An official build from ChromeOS version 16555.0.0.
+
+2. Included changes:
+
+- CL:*8921316 mt8196: Add SEC_RW permission of DRAM and SPM for S/R
+
+# 16531.0.0
+
+1. An official build from ChromeOS version 16531.0.0.
+
+2. Included changes:
+
+- CL:*8540116 mt8196: Fix missing HW AID for NSR to avoid SMPU violation
+- CL:*8335136 mt8196/smpu: Remove reduntant code from smpu_region_info_table
+- CL:*8258348 mt8196: Move common functions to common smpu.c
+- CL:*8302497 mt8196: Move MMInfra's common structures of to common code
+- CL:*8302496 common: Change common devapc.h path from include/ to include/soc/
+- CL:*8325056 common: Remove BOM and convert files to Unix line endings
+- CL:*8302506 .clang-format: Change UseTab to Always
+- CL:*8258978 mt8196: mt8196: Add R/W permission of SEMI and NEMI register for DVFSRC
+- CL:*8097212 mt8196: Add ADCC support
+- CL:*8227236 mt8196: Add DELSEL support
+- CL:*8218377 mt8196: Add PLL driver support
+- CL:*8192289 mtk-fsp: Move common cmake defs to common/common_defs.cmake
+- CL:*8083357 mt8196: Add PMIF and PMIC driver
+- CL:*8203488 mt8196: Merge romstage and ramstage linker scripts into one
+- CL:*8061519 Add top-level DIR_METADATA
+
+# 16174.45.0
+
+1. An official build from ChromeOS version 16174.45.0.
+
+2. Included changes:
+
+- CL:*8059008 mt8196: Add read and write permission of VLP register for SSPM
+- CL:*8058690 mt8196: Add read and write permission of USB register for SSPM
+
+# 16174.22.0
+
+1. An official build from ChromeOS version 16174.22.0.
+
+2. Included changes:
+
+- CL:*8013108 mtk-fsp: Add build version info
+- CL:*8009008 mt8196: Disable clock for Crypto hardware
+- CL:*7980492 mt8196/kraken_v3: Call dsb() after writing to CSRAM
+
+# 1.0
+
+1. An official build from ChromeOS version 16180.0.0.
+
+2. Included changes:
+
+- CL:*7980493 mt8196/kraken_v3: Fix incorrect use of %p
+- CL:*7980491 asm: Add isb() and dsb()
+- CL:*7979169 mt8196: Remove redundant '0x'
+- CL:*7979168 mt8196: Fix using uninitialized ld_symtree_start
+- CL:*7885449 mt8196: Add kraken load for DVFS
+- CL:*7872949 mt8196: Add SMPU driver
+- CL:*7962150 mt8196: mtk-fsp: Add assert support
+- CL:*7872950 mt8196: mt8196: Add devapc basic drivers
+- CL:*7872948 mt8196: mt8196: Add MMinfra support
+- CL:*7832067 mt8196: mt8196: Add UFS support

@@ -1,0 +1,206 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#include <amdblocks/chip.h>
+#include <amdblocks/lpc.h>
+#include <amdblocks/psp.h>
+#include <amdblocks/spi.h>
+#include <console/console.h>
+#include <device/mmio.h>
+#include <soc/iomap.h>
+#include <soc/lpc.h>
+#include <stdint.h>
+#include <vendorcode/amd/psp/psp_efs.h>
+
+static const char *spi_speed_str[8] = {
+	"66.66 Mhz",
+	"33.33 MHz",
+	"22.22 MHz",
+	"16.66 MHz",
+	"100 MHz",
+	"800 KHz",
+	"Invalid",
+	"Invalid"
+};
+
+static const char *read_mode_str[8] = {
+	"Normal Read (up to 33M)",
+	"Reserved",
+	"Dual IO (1-1-2)",
+	"Quad IO (1-1-4)",
+	"Dual IO (1-2-2)",
+	"Quad IO (1-4-4)",
+	"Normal Read (up to 66M)",
+	"Fast Read"
+};
+
+static const char *remapping[8] = {
+	"0-1-2-3",
+	"1-0-3-2",
+	"2-3-0-1",
+	"3-2-1-0",
+};
+
+void show_spi_speeds_and_modes(void)
+{
+	if (psp_get_hsti_state_rom_armor_enforced()) {
+		printk(BIOS_DEBUG, "%s: Skipped as ROM Armor active\n", __func__);
+		return;
+	}
+
+	uint16_t val16 = spi_read16(SPI100_SPEED_CONFIG);
+	uint32_t val32 = spi_read32(SPI_CNTRL0);
+	uint8_t val8 = fch_spi_rom_remapping() & SPI_ROM_PAGE_SEL;
+
+	printk(BIOS_DEBUG, "SPI normal read speed: %s\n",
+	       spi_speed_str[DECODE_SPI_NORMAL_SPEED(val16)]);
+	printk(BIOS_DEBUG, "SPI fast read speed: %s\n",
+	       spi_speed_str[DECODE_SPI_FAST_SPEED(val16)]);
+	printk(BIOS_DEBUG, "SPI alt read speed: %s\n",
+	       spi_speed_str[DECODE_SPI_ALT_SPEED(val16)]);
+	printk(BIOS_DEBUG, "SPI TPM read speed: %s\n",
+	       spi_speed_str[DECODE_SPI_TPM_SPEED(val16)]);
+	printk(BIOS_DEBUG, "SPI100: %s\n",
+	       spi_read16(SPI100_ENABLE) & SPI_USE_SPI100 ? "Enabled" : "Disabled");
+	printk(BIOS_DEBUG, "SPI Read Mode: %s\n", read_mode_str[DECODE_SPI_READ_MODE(val32)]);
+	printk(BIOS_DEBUG, "SPI ROM mapping: %s\n", remapping[val8]);
+}
+
+void __weak mainboard_spi_cfg_override(uint8_t *fast_speed, uint8_t *read_mode)
+{
+	/* No overriding SPI speeds. */
+}
+
+static uint8_t lower_speed(uint8_t speed1, uint8_t speed2)
+{
+	uint8_t speeds[] = {SPI_SPEED_800K, SPI_SPEED_16M, SPI_SPEED_22M,
+			    SPI_SPEED_33M,  SPI_SPEED_66M, SPI_SPEED_100M};
+
+	for (int i = 0; i < ARRAY_SIZE(speeds); i++) {
+		if (speed1 == speeds[i])
+			return speed1;
+		if (speed2 == speeds[i])
+			return speed2;
+	}
+
+	/* Fall back to 16MHz if we got invalid speed values */
+	return SPI_SPEED_16M;
+}
+
+static void fch_spi_set_spi100(uint8_t norm, uint8_t fast, uint8_t alt, uint8_t tpm)
+{
+	spi_write16(SPI100_SPEED_CONFIG, SPI_SPEED_CFG(norm, fast, alt, tpm));
+	spi_write16(SPI100_ENABLE, SPI_USE_SPI100 | spi_read16(SPI100_ENABLE));
+}
+
+void fch_spi_configure_4dw_burst(void)
+{
+	assert(!psp_get_hsti_state_rom_armor_enforced());
+
+	uint16_t val = spi_read16(SPI100_HOST_PREF_CONFIG);
+
+	if (CONFIG(SOC_AMD_COMMON_BLOCK_SPI_4DW_BURST))
+		val |= SPI_RD4DW_EN_HOST;
+	else
+		val &= ~SPI_RD4DW_EN_HOST;
+
+	spi_write16(SPI100_HOST_PREF_CONFIG, val);
+}
+
+static void fch_spi_set_read_mode(u32 mode)
+{
+	uint32_t val = spi_read32(SPI_CNTRL0) & ~SPI_READ_MODE_MASK;
+
+	spi_write32(SPI_CNTRL0, val | SPI_READ_MODE(mode));
+}
+
+uint8_t fch_spi_rom_remapping(void)
+{
+	assert(!psp_get_hsti_state_rom_armor_enforced());
+
+	return spi_read8(SPI_ROM_PAGE);
+}
+
+uint32_t fch_spi_get_rom2_page(uint32_t rom2_base)
+{
+	assert(!psp_get_hsti_state_rom_armor_enforced());
+
+	uint32_t page = rom2_base >> 24;
+	uint8_t rom2_override = spi_read8(SPI_ROM2_OVERRIDE);
+
+	if (rom2_override & SPI_ROM2_ADDR_BIT24_MASK){
+		page &= ~SPI_ROM2_ADDR_BIT24_VAL;
+		page |= rom2_override & SPI_ROM2_ADDR_BIT24_VAL;
+	}
+
+	if (rom2_override & SPI_ROM2_ADDR_BIT25_MASK){
+		page &= ~SPI_ROM2_ADDR_BIT25_VAL;
+		page |= rom2_override & SPI_ROM2_ADDR_BIT25_VAL;
+	}
+
+	if (fch_spi_rom_32bit())
+		page ^= (uint32_t)fch_spi_rom_remapping();
+
+	return (page << 24);
+}
+
+uint64_t fch_spi_get_rom3_page(uint64_t rom3_base)
+{
+	assert(!psp_get_hsti_state_rom_armor_enforced());
+
+	uint64_t page = rom3_base >> 24;
+
+	if (fch_spi_rom_32bit())
+		page ^= (uint64_t)fch_spi_rom_remapping();
+
+	return (page << 24);
+}
+
+bool fch_spi_rom_32bit(void)
+{
+	assert(!psp_get_hsti_state_rom_armor_enforced());
+
+	return !!(spi_read8(SPI_ROM_ADDR32_CTRL0) & SPI_ROM_ADDR32);
+}
+
+bool fch_spi_rom3_maps_to_bank3(void)
+{
+	assert(!psp_get_hsti_state_rom_armor_enforced());
+
+	return !!(spi_read8(SPI_ROM2_OVERRIDE) & SPI_FORCE_ROM3_MAP_TO_BANK3);
+}
+
+void fch_spi_config_modes(void)
+{
+	if (psp_get_hsti_state_rom_armor_enforced()) {
+		printk(BIOS_DEBUG, "%s: Skipped as ROM Armor active\n", __func__);
+		return;
+	}
+
+	uint8_t read_mode, fast_speed;
+	uint8_t normal_speed = CONFIG_NORMAL_READ_SPI_SPEED;
+	uint8_t alt_speed = CONFIG_ALT_SPI_SPEED;
+	uint8_t tpm_speed = CONFIG_TPM_SPI_SPEED;
+
+	if (!read_efs_spi_settings(&read_mode, &fast_speed)) {
+		read_mode = CONFIG_EFS_SPI_READ_MODE;
+		fast_speed = CONFIG_EFS_SPI_SPEED;
+	}
+	mainboard_spi_cfg_override(&fast_speed, &read_mode);
+
+	if (fast_speed != CONFIG_EFS_SPI_SPEED) {
+		normal_speed = lower_speed(normal_speed, fast_speed);
+		tpm_speed = lower_speed(tpm_speed, fast_speed);
+		alt_speed = lower_speed(alt_speed, fast_speed);
+	}
+
+	fch_spi_set_read_mode((u32)read_mode);
+	fch_spi_set_spi100(normal_speed, fast_speed, alt_speed, tpm_speed);
+}
+
+void fch_spi_early_init(void)
+{
+	lpc_enable_spi_rom(SPI_ROM_ENABLE);
+	lpc_enable_spi_prefetch();
+	fch_spi_configure_4dw_burst();
+	fch_spi_config_modes();
+}

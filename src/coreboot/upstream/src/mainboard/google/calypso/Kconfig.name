@@ -1,0 +1,12 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+comment "Calypso (Qualcomm Calypso)"
+
+config BOARD_GOOGLE_CALYPSO
+	bool "->  Calypso"
+
+config BOARD_GOOGLE_MENSA
+	bool "->  Mensa"
+
+config BOARD_GOOGLE_C1NV
+	bool "->  C1nv"

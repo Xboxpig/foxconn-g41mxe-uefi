@@ -1,0 +1,1106 @@
+diff --git a/src/cpu/intel/model_1067x/model_1067x_init.c b/src/cpu/intel/model_1067x/model_1067x_init.c
+index d051e891..03725cdc 100644
+--- a/src/cpu/intel/model_1067x/model_1067x_init.c
++++ b/src/cpu/intel/model_1067x/model_1067x_init.c
+@@ -8,6 +8,7 @@
+ #include <cpu/x86/cache.h>
+ #include <cpu/x86/name.h>
+ #include <cpu/intel/smm_reloc.h>
++#include <option.h>
+ 
+ #define MSR_BBL_CR_CTL3		0x11e
+ 
+@@ -143,7 +144,8 @@ static void configure_emttm_tables(void)
+ 
+ #define IA32_PECI_CTL		0x5a0
+ 
+-static void configure_misc(const int eist, const int tm2, const int emttm)
++static void configure_misc(const int eist_supported, const int eist,
++			   const int tm2, const int emttm)
+ {
+ 	msr_t msr;
+ 
+@@ -158,6 +160,7 @@ static void configure_misc(const int eist, const int tm2, const int emttm)
+ 
+ 	msr.lo |= (1 << 10);	/* FERR# multiplexing */
+ 
++	msr.lo &= ~(1 << 16);
+ 	if (eist)
+ 		msr.lo |= (1 << 16);	/* Enhanced SpeedStep Enable */
+ 
+@@ -181,7 +184,7 @@ static void configure_misc(const int eist, const int tm2, const int emttm)
+ 
+ 	wrmsr(IA32_MISC_ENABLE, msr);
+ 
+-	if (eist) {
++	if (eist_supported) {
+ 		msr.lo |= (1 << 20);	/* Lock Enhanced SpeedStep Enable */
+ 		wrmsr(IA32_MISC_ENABLE, msr);
+ 	}
+@@ -234,8 +237,9 @@ static void model_1067x_init(struct device *cpu)
+ 	const char emttm = !mp || !(rdmsr(MSR_EXTENDED_CONFIG).lo & 4);
+ 
+ 	/* Is enhanced speedstep supported? */
+-	const char eist = (cpuid1.ecx & (1 << 7)) &&
+-			  !(rdmsr(IA32_PLATFORM_ID).lo & (1 << 17));
++	const char eist_supported = (cpuid1.ecx & (1 << 7)) &&
++				    !(rdmsr(IA32_PLATFORM_ID).lo & (1 << 17));
++	const char eist = eist_supported && get_uint_option("eist", 1);
+ 	/* Test for TM2 only if EIST is available. */
+ 	const char tm2 = eist && (cpuid1.ecx & (1 << 8));
+ 
+@@ -254,7 +258,7 @@ static void model_1067x_init(struct device *cpu)
+ 		configure_emttm_tables();
+ 
+ 	/* Configure Enhanced SpeedStep and Thermal Sensors */
+-	configure_misc(eist, tm2, emttm);
++	configure_misc(eist_supported, eist, tm2, emttm);
+ 
+ 	/* PIC thermal sensor control */
+ 	configure_pic_thermal_sensors(tm2, quad);
+diff --git a/src/cpu/intel/model_1067x/mp_init.c b/src/cpu/intel/model_1067x/mp_init.c
+index 78c7ed5a..784ed481 100644
+--- a/src/cpu/intel/model_1067x/mp_init.c
++++ b/src/cpu/intel/model_1067x/mp_init.c
+@@ -1,17 +1,26 @@
+ /* SPDX-License-Identifier: GPL-2.0-only */
+ 
++#include <commonlib/helpers.h>
+ #include <console/console.h>
++#include <cpu/amd/amd64_save_state.h>
+ #include <cpu/x86/mtrr.h>
+ #include <cpu/x86/mp.h>
++#include <cpu/x86/legacy_save_state.h>
+ #include <cpu/intel/microcode.h>
+ #include <cpu/intel/smm_reloc.h>
+ #include <cpu/intel/common/common.h>
+ #include <device/device.h>
++#include <option.h>
++#include <stddef.h>
+ #include <types.h>
+ 
++static bool vmx_enabled;
++
+ /* Parallel MP initialization support. */
+ static void pre_mp_init(void)
+ {
++	vmx_enabled = get_uint_option("vmx", CONFIG(ENABLE_VMX));
++
+ 	const void *patch = intel_microcode_find();
+ 	intel_microcode_load_unlocked(patch);
+ 
+@@ -40,13 +49,59 @@ static void get_microcode_info(const void **microcode, size_t *size, int *parall
+ 	*parallel = !intel_ht_supported();
+ }
+ 
++union __packed q35_smm_save_state {
++	amd64_smm_state_save_area_t amd64;
++	struct {
++		char reserved[sizeof(amd64_smm_state_save_area_t) -
++			      sizeof(legacy_smm_state_save_area_t)];
++		legacy_smm_state_save_area_t legacy;
++	};
++};
++
++static_assert(offsetof(union q35_smm_save_state, amd64.smm_revision) ==
++	      offsetof(union q35_smm_save_state, legacy.smm_revision),
++	      "QEMU SMM revision fields must have the same offset");
++
++static void q35_get_smm_info(uintptr_t *perm_smbase, size_t *perm_smsize,
++			     size_t *smm_save_state_size)
++{
++	smm_info(perm_smbase, perm_smsize, smm_save_state_size);
++
++	if (CONFIG(G41MXE_Q35_SHIM))
++		*smm_save_state_size = sizeof(amd64_smm_state_save_area_t);
++}
++
++static void q35_smm_relocation_handler(int cpu, uintptr_t curr_smbase,
++				       uintptr_t staggered_smbase)
++{
++	union q35_smm_save_state *save_state =
++		(void *)(curr_smbase + SMM_DEFAULT_SIZE - sizeof(*save_state));
++	const u32 revision = save_state->legacy.smm_revision;
++
++	switch (revision) {
++	case 0x00020000:
++		save_state->legacy.smbase = staggered_smbase;
++		break;
++	case 0x00020064:
++		save_state->amd64.smbase = staggered_smbase;
++		break;
++	default:
++		printk(BIOS_ERR, "Unknown Q35 SMM revision 0x%x, not relocating CPU %d\n",
++		       revision, cpu);
++		return;
++	}
++
++	printk(BIOS_DEBUG, "Q35 shim SMM revision: 0x%08x\n", revision);
++	printk(BIOS_DEBUG, "New SMBASE=0x%08x\n", (u32)staggered_smbase);
++}
++
+ /* the SMRR enable and lock bit need to be set in IA32_FEATURE_CONTROL
+    to enable SMRR so configure IA32_FEATURE_CONTROL early on */
+ static void per_cpu_smm_trigger(void)
+ {
+ 	msr_t mtrr_cap = rdmsr(MTRR_CAP_MSR);
+ 	if (mtrr_cap.lo & MTRR_CAP_SMRR) {
+-		set_feature_ctrl_vmx();
++		set_feature_ctrl_vmx_arg(vmx_enabled);
+ 		msr_t ia32_ft_ctrl = rdmsr(IA32_FEATURE_CONTROL);
+ 		/* We don't care if the lock is already setting
+ 		   as our smm relocation handler is able to handle
+@@ -65,7 +120,8 @@ static void per_cpu_smm_trigger(void)
+ 			wrmsr(IA32_FEATURE_CONTROL, ia32_ft_ctrl);
+ 		}
+ 	} else {
+-		set_vmx_and_lock();
++		set_feature_ctrl_vmx_arg(vmx_enabled);
++		set_feature_ctrl_lock();
+ 	}
+ 
+ 	/* Relocate the SMM handler. */
+@@ -85,11 +141,12 @@ static void post_mp_init(void)
+ static const struct mp_ops mp_ops = {
+ 	.pre_mp_init = pre_mp_init,
+ 	.get_cpu_count = get_cpu_count,
+-	.get_smm_info = smm_info,
++	.get_smm_info = q35_get_smm_info,
+ 	.get_microcode_info = get_microcode_info,
+ 	.pre_mp_smm_init = smm_southbridge_clear_state,
+ 	.per_cpu_smm_trigger = per_cpu_smm_trigger,
+-	.relocation_handler = smm_relocation_handler,
++	.relocation_handler = CONFIG(G41MXE_Q35_SHIM) ?
++		q35_smm_relocation_handler : smm_relocation_handler,
+ 	.post_mp_init = post_mp_init,
+ };
+ 
+diff --git a/src/drivers/efi/option.c b/src/drivers/efi/option.c
+index d634c963..39d4c327 100644
+--- a/src/drivers/efi/option.c
++++ b/src/drivers/efi/option.c
+@@ -6,6 +6,45 @@
+ #include <Uefi/UefiBaseType.h>
+ 
+ #include "efivars.h"
++#if CONFIG(G41MXE_ASUS_SETTINGS)
++#include <console/console.h>
++#include <string.h>
++#include "asus_g41_policy.h"
++
++static bool asus_g41_option(const struct region_device *rdev, const char *name,
++			    unsigned int *value)
++{
++	static const EFI_GUID setup_guid = {
++		0xec87d643, 0xeba4, 0x4bb5, {0xa1, 0xe5, 0x3f, 0x3e, 0x36, 0xb2, 0x0d, 0xa9}};
++	static const EFI_GUID sa_guid = {
++		0x72c5e28c, 0x7783, 0x43a1, {0x87, 0x67, 0xfa, 0xd7, 0x3f, 0xcc, 0xaf, 0xa4}};
++	unsigned char data[1282];
++	uint32_t size;
++	bool valid;
++	enum cb_err ret;
++
++	if (!strcmp(name, "cpu_fan_profile") || !strcmp(name, "chassis_fan_profile")) {
++		size = 144;
++		ret = efi_fv_get_option(rdev, &setup_guid, "AsusQFanSetupData", data, &size);
++		if (ret != CB_SUCCESS)
++			return false;
++		valid = asus_g41_fan_policy(data, size, !strcmp(name, "cpu_fan_profile"), value);
++	} else if (!strcmp(name, "max_mem_speed")) {
++		size = sizeof(data);
++		ret = efi_fv_get_option(rdev, &sa_guid, "SaSetup", data, &size);
++		if (ret != CB_SUCCESS)
++			return false;
++		valid = asus_g41_memory_policy(data, size, value);
++	} else {
++		return false;
++	}
++	if (valid)
++		printk(BIOS_INFO, "ASUS G41 bridge: %s=%u\n", name, *value);
++	else
++		printk(BIOS_WARNING, "ASUS G41 bridge: unsupported %s; keeping native policy\n", name);
++	return valid;
++}
++#endif
+ 
+ static const EFI_GUID EficorebootNvDataGuid = {
+ 	0xceae4c1d, 0x335b, 0x4685, { 0xa4, 0xa0, 0xfc, 0x4a, 0x94, 0xee, 0xa0, 0x85 } };
+@@ -20,6 +59,11 @@ unsigned int get_uint_option(const char *name, const unsigned int fallback)
+ 	if (smmstore_lookup_region(&rdev))
+ 		return fallback;
+ 
++#if CONFIG(G41MXE_ASUS_SETTINGS)
++	if (asus_g41_option(&rdev, name, &var))
++		return var;
++#endif
++
+ 	var = 0;
+ 	size = sizeof(var);
+ 	ret = efi_fv_get_option(&rdev, &EficorebootNvDataGuid, name, &var, &size);
+diff --git a/src/mainboard/foxconn/g41s-k/Kconfig b/src/mainboard/foxconn/g41s-k/Kconfig
+index b2237599..f3de242d 100644
+--- a/src/mainboard/foxconn/g41s-k/Kconfig
++++ b/src/mainboard/foxconn/g41s-k/Kconfig
+@@ -1,6 +1,6 @@
+ ## SPDX-License-Identifier: GPL-2.0-only
+ 
+-if BOARD_FOXCONN_G41S_K || BOARD_FOXCONN_G41M
++if BOARD_FOXCONN_G41S_K || BOARD_FOXCONN_G41M || BOARD_FOXCONN_G41MXE
+ 
+ config BOARD_SPECIFIC_OPTIONS
+ 	def_bool y
+@@ -8,7 +8,9 @@ config BOARD_SPECIFIC_OPTIONS
+ 	select NORTHBRIDGE_INTEL_X4X
+ 	select SOUTHBRIDGE_INTEL_I82801GX
+ 	select SUPERIO_ITE_IT8720F
+-	select BOARD_ROMSIZE_KB_1024
++	select BOARD_ROMSIZE_KB_1024 if !BOARD_FOXCONN_G41MXE
++	select BOARD_ROMSIZE_KB_8192 if BOARD_FOXCONN_G41MXE && G41MXE_Q35_SHIM
++	select BOARD_ROMSIZE_KB_16384 if BOARD_FOXCONN_G41MXE && !G41MXE_Q35_SHIM
+ 	select HAVE_ACPI_RESUME
+ 	select HAVE_ACPI_TABLES
+ 	select HAVE_CMOS_DEFAULT
+@@ -16,6 +18,7 @@ config BOARD_SPECIFIC_OPTIONS
+ 	select MEMORY_MAPPED_TPM
+ 	select INTEL_GMA_HAVE_VBT
+ 	select MAINBOARD_HAS_LIBGFXINIT
++	select DRIVERS_OPTION_CFR_ENABLED if BOARD_FOXCONN_G41MXE && PAYLOAD_EDK2 && SMMSTORE
+ 
+ config MAINBOARD_DIR
+ 	default "foxconn/g41s-k"
+@@ -23,12 +26,47 @@ config MAINBOARD_DIR
+ config VARIANT_DIR
+ 	default "g41s-k" if BOARD_FOXCONN_G41S_K
+ 	default "g41m" if BOARD_FOXCONN_G41M
++	default "g41mxe" if BOARD_FOXCONN_G41MXE
+ 
+ config MAINBOARD_PART_NUMBER
+ 	default "G41S-K" if BOARD_FOXCONN_G41S_K
+ 	default "G41M/G41M-S/G41M-V" if BOARD_FOXCONN_G41M
++	default "G41MXE" if BOARD_FOXCONN_G41MXE
+ 
+ config OVERRIDE_DEVICETREE
+ 	default "variants/\$(CONFIG_VARIANT_DIR)/overridetree.cb"
+ 
+-endif # BOARD_FOXCONN_G41S_K
++config G41MXE_Q35_SHIM
++	bool "QEMU Q35 compatibility shim (testing only)"
++	depends on BOARD_FOXCONN_G41MXE
++	select BOOT_DEVICE_NOT_SPI_FLASH
++	select BOOT_DEVICE_MEMORY_MAPPED
++	select BOOT_DEVICE_SUPPORTS_WRITES
++	help
++	  Build a diagnostic image that can execute the G41MXE port under QEMU's
++	  Q35 machine. QEMU does not emulate the cache-as-RAM behavior used by
++	  LGA775 processors, so the shim places the temporary CAR area in QEMU
++	  system RAM. This image is not suitable for flashing to real hardware.
++
++config G41MXE_POST_SUCCESS_BEEP
++	bool "Beep after successful coreboot POST"
++	depends on BOARD_FOXCONN_G41MXE
++	help
++	  Emit one short tone through the legacy PC-speaker output immediately
++	  before jumping to the payload. A passive chassis speaker must be
++	  connected to pins 1 and 4 of the four-pin SPEAKER header.
++
++config G41MXE_ASUS_SETTINGS
++	bool "Experimental ASUS 3401 saved fan/memory settings bridge"
++	depends on BOARD_FOXCONN_G41MXE && USE_UEFI_VARIABLE_STORE
++	help
++	  Read only the audited PRIME Z490-A 3401 Q-Fan profiles and maximum
++	  memory frequency fields from saved EFI variables. Apply board-native
++	  IT8720F profiles and SPD-limited memory training on the next boot.
++	  CPU overclocking, voltages, XMP, DC fan mode and manual curves are
++	  not supported. Leave disabled on production firmware until tested.
++
++config DCACHE_RAM_BASE
++	default 0x10000 if G41MXE_Q35_SHIM
++
++endif # BOARD_FOXCONN_G41S_K || BOARD_FOXCONN_G41M || BOARD_FOXCONN_G41MXE
+diff --git a/src/mainboard/foxconn/g41s-k/Kconfig.name b/src/mainboard/foxconn/g41s-k/Kconfig.name
+index 2678e9df..f6230a8e 100644
+--- a/src/mainboard/foxconn/g41s-k/Kconfig.name
++++ b/src/mainboard/foxconn/g41s-k/Kconfig.name
+@@ -4,3 +4,6 @@ config BOARD_FOXCONN_G41S_K
+ 	bool "G41S-K"
+ config BOARD_FOXCONN_G41M
+ 	bool "G41M/G41M-S/G41M-V"
++
++config BOARD_FOXCONN_G41MXE
++	bool "G41MXE"
+diff --git a/src/mainboard/foxconn/g41s-k/Makefile.mk b/src/mainboard/foxconn/g41s-k/Makefile.mk
+index b4e5dcc3..d7b5bcf1 100644
+--- a/src/mainboard/foxconn/g41s-k/Makefile.mk
++++ b/src/mainboard/foxconn/g41s-k/Makefile.mk
+@@ -1,8 +1,16 @@
+ ## SPDX-License-Identifier: GPL-2.0-only
+ 
+ ramstage-y += cstates.c
++ramstage-$(CONFIG_BOARD_FOXCONN_G41MXE) += mainboard.c
++ramstage-$(CONFIG_DRIVERS_OPTION_CFR) += cfr.c
++ramstage-$(CONFIG_G41MXE_POST_SUCCESS_BEEP) += post_success_beep.c
+ romstage-y += gpio.c
+ 
++romstage-$(CONFIG_G41MXE_Q35_SHIM) += q35_preram_media.c
++ramstage-$(CONFIG_G41MXE_Q35_SHIM) += ../../emulation/qemu-i440fx/rom_media.c
++smm-$(CONFIG_G41MXE_Q35_SHIM) += ../../emulation/qemu-i440fx/rom_media.c
++smm-$(CONFIG_G41MXE_Q35_SHIM) += ../../emulation/qemu-q35/smihandler.c
++
+ bootblock-y += early_init.c
+ romstage-y += early_init.c
+ 
+diff --git a/src/mainboard/foxconn/g41s-k/early_init.c b/src/mainboard/foxconn/g41s-k/early_init.c
+index 29ae78e0..5d45b0fa 100644
+--- a/src/mainboard/foxconn/g41s-k/early_init.c
++++ b/src/mainboard/foxconn/g41s-k/early_init.c
+@@ -42,6 +42,6 @@ void bootblock_mainboard_early_init(void)
+ void mb_get_spd_map(u8 spd_map[4])
+ {
+ 	spd_map[0] = 0x50;
+-	if (CONFIG(BOARD_FOXCONN_G41M))
++	if (CONFIG(BOARD_FOXCONN_G41M) || CONFIG(BOARD_FOXCONN_G41MXE))
+ 		spd_map[2] = 0x52;
+ }
+diff --git a/src/mainboard/foxconn/g41s-k/hda_verb.c b/src/mainboard/foxconn/g41s-k/hda_verb.c
+index 2d94ce13..295f57ae 100644
+--- a/src/mainboard/foxconn/g41s-k/hda_verb.c
++++ b/src/mainboard/foxconn/g41s-k/hda_verb.c
+@@ -21,6 +21,21 @@ static const u32 realtek_alc888_verbs[] = {
+ 	AZALIA_PIN_CFG(0, 0x1e, 0x01441130),
+ 	AZALIA_PIN_CFG(0, 0x1f, AZALIA_PIN_CFG_NC(0)),
+ };
++#elif CONFIG(BOARD_FOXCONN_G41MXE)
++static const u32 realtek_alc662_verbs[] = {
++	/* Pin Widget Verb Table from Foxconn 964F1P10. */
++
++	AZALIA_PIN_CFG(2, 0x14, 0x01014410),
++	AZALIA_PIN_CFG(2, 0x15, AZALIA_PIN_CFG_NC(0)),
++	AZALIA_PIN_CFG(2, 0x16, AZALIA_PIN_CFG_NC(0)),
++	AZALIA_PIN_CFG(2, 0x18, 0x01a19c30),
++	AZALIA_PIN_CFG(2, 0x19, 0x02a19c31),
++	AZALIA_PIN_CFG(2, 0x1a, 0x0181343f),
++	AZALIA_PIN_CFG(2, 0x1b, 0x02214c1f),
++	AZALIA_PIN_CFG(2, 0x1c, 0x593301f0),
++	AZALIA_PIN_CFG(2, 0x1d, 0x40048603),
++	AZALIA_PIN_CFG(2, 0x1e, 0x99430120),
++};
+ #else /* CONFIG_BOARD_FOXCONN_G41M */
+ static const u32 realtek_alc888_verbs[] = {
+ 	/* Pin Widget Verb Table */
+@@ -54,6 +69,15 @@ static struct azalia_codec mainboard_azalia_codecs[] = {
+ 		.verbs        = realtek_alc888_verbs,
+ 		.verb_count   = ARRAY_SIZE(realtek_alc888_verbs),
+ 	},
++#elif CONFIG(BOARD_FOXCONN_G41MXE)
++	{
++		.name         = "Realtek ALC662",
++		.vendor_id    = 0x10ec0662,
++		.subsystem_id = 0x105b0dc2,
++		.address      = 2,
++		.verbs        = realtek_alc662_verbs,
++		.verb_count   = ARRAY_SIZE(realtek_alc662_verbs),
++	},
+ #else /* CONFIG_BOARD_FOXCONN_G41M */
+ 	{
+ 		.name         = "Realtek ALC888",
+diff --git a/src/northbridge/intel/x4x/Kconfig b/src/northbridge/intel/x4x/Kconfig
+index 6fa45519..e7484ea9 100644
+--- a/src/northbridge/intel/x4x/Kconfig
++++ b/src/northbridge/intel/x4x/Kconfig
+@@ -6,7 +6,7 @@ config NORTHBRIDGE_INTEL_X4X
+ 	select VGA
+ 	select INTEL_GMA_ACPI
+ 	select CACHE_MRC_SETTINGS
+-	select BOOT_DEVICE_SPI_FLASH_NO_EARLY_WRITES
++	select BOOT_DEVICE_SPI_FLASH_NO_EARLY_WRITES if !G41MXE_Q35_SHIM
+ 	select HAVE_X86_64_SUPPORT
+ 	select DRAM_SUPPORT_DDR3
+ 	select DRAM_SUPPORT_DDR2
+@@ -14,6 +14,14 @@ config NORTHBRIDGE_INTEL_X4X
+ 
+ if NORTHBRIDGE_INTEL_X4X
+ 
++config X4X_RAMINIT_POSTCODES
++	bool "Emit fine-grained X4x RAM-init POST codes"
++	default n
++	help
++	  Emit diagnostic POST codes around SPD discovery, JEDEC setup and
++	  memory training.  This is intended for bring-up with a port-80 POST
++	  card or serial console and should not be enabled in production builds.
++
+ config CBFS_SIZE
+ 	default 0x100000 if !SOUTHBRIDGE_INTEL_I82801GX
+ 
+diff --git a/src/northbridge/intel/x4x/memmap.c b/src/northbridge/intel/x4x/memmap.c
+index c7831b85..c1de2e27 100644
+--- a/src/northbridge/intel/x4x/memmap.c
++++ b/src/northbridge/intel/x4x/memmap.c
+@@ -4,6 +4,7 @@
+ 
+ #include <cbmem.h>
+ #include <commonlib/helpers.h>
++#include <arch/io.h>
+ #include <arch/romstage.h>
+ #include <device/pci_ops.h>
+ #include <console/console.h>
+@@ -14,6 +15,24 @@
+ #include <cpu/intel/smm_reloc.h>
+ #include <types.h>
+ 
++#define QEMU_CMOS_ADDR_PORT 0x70
++#define QEMU_CMOS_DATA_PORT 0x71
++#define QEMU_CMOS_LOW_RAM   0x34
++#define QEMU_CMOS_HIGH_RAM  0x35
++
++static uintptr_t q35_shim_top_of_ram(void)
++{
++	unsigned long tomk;
++
++	outb(QEMU_CMOS_HIGH_RAM, QEMU_CMOS_ADDR_PORT);
++	tomk = (unsigned long)inb(QEMU_CMOS_DATA_PORT) << 14;
++	outb(QEMU_CMOS_LOW_RAM, QEMU_CMOS_ADDR_PORT);
++	tomk |= (unsigned long)inb(QEMU_CMOS_DATA_PORT) << 6;
++	tomk += 16 * 1024;
++
++	return tomk * KiB;
++}
++
+ /** Decodes used Graphics Mode Select (GMS) to kilobytes. */
+ u32 decode_igd_memory_size(const u32 gms)
+ {
+@@ -57,12 +76,18 @@ u32 decode_tseg_size(const u32 esmramc)
+ 
+ static size_t northbridge_get_tseg_size(void)
+ {
++	if (CONFIG(G41MXE_Q35_SHIM))
++		return 8 * MiB;
++
+ 	const u8 esmramc = pci_read_config8(HOST_BRIDGE, D0F0_ESMRAMC);
+ 	return decode_tseg_size(esmramc);
+ }
+ 
+ static uintptr_t northbridge_get_tseg_base(void)
+ {
++	if (CONFIG(G41MXE_Q35_SHIM))
++		return q35_shim_top_of_ram() - 8 * MiB;
++
+ 	return pci_read_config32(HOST_BRIDGE, D0F0_TSEG);
+ }
+ 
+diff --git a/src/northbridge/intel/x4x/northbridge.c b/src/northbridge/intel/x4x/northbridge.c
+index 69eb9517..cb4b567c 100644
+--- a/src/northbridge/intel/x4x/northbridge.c
++++ b/src/northbridge/intel/x4x/northbridge.c
+@@ -25,6 +25,22 @@ static void mch_domain_read_resources(struct device *dev)
+ 
+ 	pci_domain_read_resources(dev);
+ 
++	if (CONFIG(G41MXE_Q35_SHIM)) {
++		uintptr_t tseg_base;
++		size_t tseg_size;
++
++		smm_region(&tseg_base, &tseg_size);
++		printk(BIOS_DEBUG, "G41MXE Q35 shim: RAM top 0x%08lx\n",
++		       tseg_base + tseg_size);
++		ram_from_to(dev, index++, 0, 0xa0000);
++		mmio_from_to(dev, index++, 0xa0000, 0xc0000);
++		reserved_ram_from_to(dev, index++, 0xc0000, 1 * MiB);
++		ram_from_to(dev, index++, 1 * MiB, cbmem_top());
++		reserved_ram_from_to(dev, index++, cbmem_top(), tseg_base + tseg_size);
++		mmconf_resource(dev, index++);
++		return;
++	}
++
+ 	struct device *mch = pcidev_on_root(0, 0);
+ 
+ 	/* Top of Upper Usable DRAM, including remap */
+diff --git a/src/northbridge/intel/x4x/raminit.c b/src/northbridge/intel/x4x/raminit.c
+index 6b0f3588..379f5522 100644
+--- a/src/northbridge/intel/x4x/raminit.c
++++ b/src/northbridge/intel/x4x/raminit.c
+@@ -11,13 +11,34 @@
+ #include <device/dram/ddr2.h>
+ #include <device/dram/ddr3.h>
+ #include <mrc_cache.h>
++#include <option.h>
+ #include <timestamp.h>
+ #include <types.h>
+ 
+ #include "raminit.h"
+ #include "x4x.h"
+ 
+-#define MRC_CACHE_VERSION 0
++#define MRC_CACHE_VERSION 1
++
++#define MEMORY_SPEED_AUTO 0
++
++static u32 get_max_mem_speed_mhz(void)
++{
++	const u32 speed = get_uint_option("max_mem_speed", MEMORY_SPEED_AUTO);
++
++	switch (speed) {
++	case MEMORY_SPEED_AUTO:
++	case 667:
++	case 800:
++	case 1066:
++	case 1333:
++		return speed;
++	default:
++		printk(BIOS_WARNING, "Invalid memory speed limit %u, using automatic\n",
++		       speed);
++		return MEMORY_SPEED_AUTO;
++	}
++}
+ 
+ static u16 ddr2_get_crc(u8 device, u8 len)
+ {
+@@ -110,6 +131,12 @@ static void select_cas_dramfreq_ddr2(struct sysinfo *s, const struct abs_timings
+ 		s->selected_timings.mem_clk = MEM_CLOCK_800MHz;
+ 		break;
+ 	}
++
++	if (s->max_mem_speed_mhz == 667 &&
++	    s->selected_timings.mem_clk > MEM_CLOCK_667MHz) {
++		s->selected_timings.tclk = TCK_333MHZ;
++		s->selected_timings.mem_clk = MEM_CLOCK_667MHz;
++	}
+ }
+ 
+ static void mchinfo_ddr2(struct sysinfo *s)
+@@ -259,6 +286,22 @@ static void select_cas_dramfreq_ddr3(struct sysinfo *s, struct abs_timings *save
+ 		break;
+ 	}
+ 
++	switch (s->max_mem_speed_mhz) {
++	case 667:
++	case 800:
++		/* X4x DDR3 tables start at DDR3-800. */
++		min_tCLK = MAX(min_tCLK, TCK_400MHZ);
++		break;
++	case 1066:
++		min_tCLK = MAX(min_tCLK, TCK_533MHZ);
++		break;
++	case 1333:
++		min_tCLK = MAX(min_tCLK, TCK_666MHZ);
++		break;
++	default:
++		break;
++	}
++
+ 	min_tCLK = MAX(min_tCLK, saved_timings->min_tclk);
+ 	if (min_tCLK == 0) {
+ 		printk(BIOS_ERR,
+@@ -447,6 +490,7 @@ static void decode_spd_select_timings(struct sysinfo *s)
+ 			s->dimms[i].card_type = RAW_CARD_UNPOPULATED;
+ 			continue;
+ 		}
++		x4x_raminit_post(X4X_POST_SPD_PROBE_BASE + i);
+ 		switch (smbus_read_byte(s->spd_map[i], SPD_MEMORY_TYPE)) {
+ 		case DDR2SPD:
+ 			dram_type_mask &= 1 << DDR2;
+@@ -464,6 +508,7 @@ static void decode_spd_select_timings(struct sysinfo *s)
+ 			die("Mixing up dimm types is not supported!\n");
+ 
+ 		printk(BIOS_DEBUG, "Decoding dimm %d\n", i);
++		x4x_raminit_post(X4X_POST_SPD_READ_BASE + i);
+ 		if (i2c_eeprom_read(device, 0, 128, raw_spd) != 128) {
+ 			printk(BIOS_DEBUG,
+ 				"i2c block operation failed, trying smbus byte operation.\n");
+@@ -471,6 +516,7 @@ static void decode_spd_select_timings(struct sysinfo *s)
+ 				raw_spd[j] = smbus_read_byte(device, j);
+ 		}
+ 
++		x4x_raminit_post(X4X_POST_SPD_DECODE_BASE + i);
+ 		if (s->spd_type == DDR2){
+ 			if (ddr2_save_dimminfo(i, raw_spd, &saved_timings, s)) {
+ 				printk(BIOS_WARNING,
+@@ -488,9 +534,12 @@ static void decode_spd_select_timings(struct sysinfo *s)
+ 			}
+ 		}
+ 		dimm_mask |= (1 << i);
++		x4x_raminit_post(X4X_POST_SPD_READY_BASE + i);
+ 	}
+-	if (!dimm_mask)
++	if (!dimm_mask) {
++		x4x_raminit_post(X4X_POST_NO_USABLE_DIMM);
+ 		die("No memory installed.\n");
++	}
+ 
+ 	if (s->spd_type == DDR2)
+ 		select_cas_dramfreq_ddr2(s, &saved_timings);
+@@ -567,14 +616,23 @@ void sdram_initialize(int boot_path, const u8 *spd_map)
+ 
+ 	timestamp_add_now(TS_INITRAM_START);
+ 	printk(BIOS_DEBUG, "Setting up RAM controller.\n");
++	x4x_raminit_post(X4X_POST_SDRAM_ENTER);
+ 
+ 	pci_write_config8(HOST_BRIDGE, 0xdf, 0xff);
+ 
+ 	memset(&s, 0, sizeof(struct sysinfo));
++	s.max_mem_speed_mhz = get_max_mem_speed_mhz();
+ 
+ 	ctrl_cached = mrc_cache_current_mmap_leak(MRC_TRAINING_DATA,
+ 						  MRC_CACHE_VERSION,
+ 						  &mrc_size);
++	x4x_raminit_post(X4X_POST_MRC_CACHE_PROBED);
++
++	/* S3 must restore its exact training. A user-requested full training on a
++	 * normal boot follows the existing no-cache path, including the cold reset
++	 * required before retraining after a warm reboot. */
++	if (boot_path != BOOT_PATH_RESUME && !get_uint_option("memory_fast_boot", 1))
++		ctrl_cached = NULL;
+ 
+ 	if (!ctrl_cached || mrc_size < sizeof(s)) {
+ 		if (boot_path == BOOT_PATH_RESUME) {
+@@ -596,10 +654,11 @@ void sdram_initialize(int boot_path, const u8 *spd_map)
+ 			       "SPD checksums don't match, dimm's have been replaced\n");
+ 		} else {
+ 			find_fsb_speed(&s);
+-			fast_boot = s.max_fsb == ctrl_cached->max_fsb;
++			fast_boot = s.max_fsb == ctrl_cached->max_fsb &&
++				s.max_mem_speed_mhz == ctrl_cached->max_mem_speed_mhz;
+ 			if (!fast_boot)
+ 				printk(BIOS_DEBUG,
+-				       "CPU FSB does not match and has been replaced\n");
++				       "CPU FSB or memory speed option changed\n");
+ 		}
+ 	} else {
+ 		fast_boot = boot_path == BOOT_PATH_RESUME;
+@@ -617,6 +676,7 @@ void sdram_initialize(int boot_path, const u8 *spd_map)
+ 		s.spd_map[1] = spd_map[1];
+ 		s.spd_map[2] = spd_map[2];
+ 		s.spd_map[3] = spd_map[3];
++		x4x_raminit_post(X4X_POST_RESET_CHECK);
+ 		checkreset_ddr2(s.boot_path);
+ 
+ 		/* Detect dimms per channel */
+@@ -625,13 +685,17 @@ void sdram_initialize(int boot_path, const u8 *spd_map)
+ 
+ 		mchinfo_ddr2(&s);
+ 
++		x4x_raminit_post(X4X_POST_FSB_DETECT);
+ 		find_fsb_speed(&s);
+ 		decode_spd_select_timings(&s);
+ 		print_selected_timings(&s);
++		x4x_raminit_post(X4X_POST_DIMM_CONFIG);
+ 		find_dimm_config(&s);
+ 	}
+ 
++	x4x_raminit_post(X4X_POST_CALL_DO_RAMINIT);
+ 	do_raminit(&s, fast_boot);
++	x4x_raminit_post(X4X_POST_DO_RAMINIT_RETURNED);
+ 
+ 	pci_and_config8(PCI_DEV(0, 0x1f, 0), 0xa2, (u8)~0x80);
+ 
+@@ -643,9 +707,12 @@ void sdram_initialize(int boot_path, const u8 *spd_map)
+ 
+ 	bool s3resume = boot_path == BOOT_PATH_RESUME;
+ 
++	x4x_raminit_post(X4X_POST_CBMEM_RECOVERY);
+ 	cbmem_was_inited = !cbmem_recovery(s3resume);
+-	if (!fast_boot)
++	if (!fast_boot) {
++		x4x_raminit_post(X4X_POST_MRC_CACHE_STASH);
+ 		mrc_cache_stash_data(MRC_TRAINING_DATA, MRC_CACHE_VERSION, &s, sizeof(s));
++	}
+ 
+ 	if (s3resume && !cbmem_was_inited) {
+ 		/* Failed S3 resume, reset to come up cleanly */
+@@ -653,4 +720,5 @@ void sdram_initialize(int boot_path, const u8 *spd_map)
+ 	}
+ 
+ 	printk(BIOS_DEBUG, "Memory initialized\n");
++	x4x_raminit_post(X4X_POST_SDRAM_DONE);
+ }
+diff --git a/src/northbridge/intel/x4x/raminit.h b/src/northbridge/intel/x4x/raminit.h
+index 750c726d..a41f09fb 100644
+--- a/src/northbridge/intel/x4x/raminit.h
++++ b/src/northbridge/intel/x4x/raminit.h
+@@ -180,6 +180,7 @@ struct rcven_timings {
+ struct sysinfo {
+ 	int		boot_path;
+ 	enum fsb_clock	max_fsb;
++	u32		max_mem_speed_mhz;
+ 
+ 	int		dimm_config[2];
+ 	int		spd_type;
+@@ -244,4 +245,6 @@ extern const u32 ddr3_c2_tab[2][3][6][2];
+ extern const u8 ddr3_c2_x264[3][6];
+ extern const u16 ddr3_c2_x23c[3][6];
+ 
++#include "raminit_postcodes.h"
++
+ #endif /* __X4X_RAMINIT_H__ */
+diff --git a/src/northbridge/intel/x4x/raminit_ddr23.c b/src/northbridge/intel/x4x/raminit_ddr23.c
+index d19a83af..8cd504c5 100644
+--- a/src/northbridge/intel/x4x/raminit_ddr23.c
++++ b/src/northbridge/intel/x4x/raminit_ddr23.c
+@@ -1934,8 +1934,10 @@ void do_raminit(struct sysinfo *s, int fast_boot)
+ 	u8 ch;
+ 	u8 r, bank;
+ 	u32 reg32;
++	x4x_raminit_post(X4X_POST_DO_RAMINIT_ENTER);
+ 
+ 	if (s->boot_path != BOOT_PATH_WARM_RESET) {
++		x4x_raminit_post(X4X_POST_CLOCK_FREQUENCY);
+ 		/* Clear self refresh */
+ 		mchbar_setbits32(PMSTS_MCHBAR, PMSTS_BOTH_SELFREFRESH);
+ 
+@@ -1960,23 +1962,28 @@ void do_raminit(struct sysinfo *s, int fast_boot)
+ 	}
+ 
+ 	/* Program clock crossing */
++	x4x_raminit_post(X4X_POST_CLOCK_CROSSING);
+ 	program_crossclock(s);
+ 	printk(BIOS_DEBUG, "Done clk crossing\n");
+ 
+ 	if (s->boot_path != BOOT_PATH_WARM_RESET) {
++		x4x_raminit_post(X4X_POST_IO_CLOCK);
+ 		setioclk_dram(s);
+ 		printk(BIOS_DEBUG, "Done I/O clk\n");
+ 	}
+ 
+ 	/* Grant to launch */
++	x4x_raminit_post(X4X_POST_DRAM_LAUNCH);
+ 	launch_dram(s);
+ 	printk(BIOS_DEBUG, "Done launch\n");
+ 
+ 	/* Program DRAM timings */
++	x4x_raminit_post(X4X_POST_DRAM_TIMINGS);
+ 	program_timings(s);
+ 	printk(BIOS_DEBUG, "Done timings\n");
+ 
+ 	/* Program DLL */
++	x4x_raminit_post(X4X_POST_DLL);
+ 	program_dll(s);
+ 	if (!fast_boot)
+ 		select_default_dq_dqs_settings(s);
+@@ -1984,21 +1991,25 @@ void do_raminit(struct sysinfo *s, int fast_boot)
+ 
+ 	/* RCOMP */
+ 	if (s->boot_path != BOOT_PATH_WARM_RESET) {
++		x4x_raminit_post(X4X_POST_RCOMP);
+ 		prog_rcomp(s);
+ 		printk(BIOS_DEBUG, "RCOMP\n");
+ 	}
+ 
+ 	/* ODT */
++	x4x_raminit_post(X4X_POST_ODT);
+ 	program_odt(s);
+ 	printk(BIOS_DEBUG, "Done ODT\n");
+ 
+ 	/* RCOMP update */
+ 	if (s->boot_path != BOOT_PATH_WARM_RESET) {
++		x4x_raminit_post(X4X_POST_RCOMP_UPDATE_WAIT);
+ 		while (mchbar_read8(0x130) & 1)
+ 			;
+ 		printk(BIOS_DEBUG, "Done RCOMP update\n");
+ 	}
+ 
++	x4x_raminit_post(X4X_POST_PRE_JEDEC);
+ 	pre_jedec_memory_map();
+ 
+ 	/* IOBUFACT */
+@@ -2037,6 +2048,7 @@ void do_raminit(struct sysinfo *s, int fast_boot)
+ 
+ 	/* JEDEC reset */
+ 	if (s->boot_path != BOOT_PATH_RESUME) {
++		x4x_raminit_post(X4X_POST_JEDEC);
+ 		if (s->spd_type == DDR2)
+ 			jedec_ddr2(s);
+ 		else /* DDR3 */
+@@ -2046,6 +2058,7 @@ void do_raminit(struct sysinfo *s, int fast_boot)
+ 	printk(BIOS_DEBUG, "Done jedec steps\n");
+ 
+ 	if (s->spd_type == DDR3) {
++		x4x_raminit_post(X4X_POST_DDR3_LEVELING_RESET);
+ 		if (!fast_boot)
+ 			search_write_leveling(s);
+ 		if (s->boot_path == BOOT_PATH_NORMAL)
+@@ -2053,6 +2066,7 @@ void do_raminit(struct sysinfo *s, int fast_boot)
+ 	}
+ 
+ 	/* After JEDEC reset */
++	x4x_raminit_post(X4X_POST_POST_JEDEC);
+ 	mchbar_clrbits8(0x40, 1 << 1);
+ 	FOR_EACH_POPULATED_CHANNEL(s->dimms, ch) {
+ 		reg32 = (2 << 18);
+@@ -2087,6 +2101,7 @@ void do_raminit(struct sysinfo *s, int fast_boot)
+ 	}
+ 
+ 	/* Dummy reads */
++	x4x_raminit_post(X4X_POST_DUMMY_READS);
+ 	if (s->boot_path == BOOT_PATH_NORMAL) {
+ 		FOR_EACH_POPULATED_RANK(s->dimms, ch, r) {
+ 			for (bank = 0; bank < 4; bank++)
+@@ -2096,6 +2111,7 @@ void do_raminit(struct sysinfo *s, int fast_boot)
+ 	printk(BIOS_DEBUG, "Done dummy reads\n");
+ 
+ 	/* Receive enable */
++	x4x_raminit_post(X4X_POST_RECEIVE_ENABLE);
+ 	sdram_program_receive_enable(s, fast_boot);
+ 	printk(BIOS_DEBUG, "Done rcven\n");
+ 
+@@ -2114,32 +2130,39 @@ void do_raminit(struct sysinfo *s, int fast_boot)
+ 
+ 	if (!fast_boot) {
+ 		if (s->selected_timings.mem_clk > MEM_CLOCK_667MHz) {
++			x4x_raminit_post(X4X_POST_WRITE_TRAINING);
+ 			if (do_write_training(s))
+ 				die("DQ write training failed!");
+ 		}
++		x4x_raminit_post(X4X_POST_READ_TRAINING);
+ 		if (do_read_training(s))
+ 			die("DQS read training failed!");
+ 	}
+ 
+ 	/* DRADRB */
++	x4x_raminit_post(X4X_POST_DRADRB);
+ 	set_dradrb(s);
+ 	printk(BIOS_DEBUG, "Done DRADRB\n");
+ 
+ 	/* Memory map */
++	x4x_raminit_post(X4X_POST_MEMORY_MAP);
+ 	configure_mmap(s);
+ 	printk(BIOS_DEBUG, "Done memory map\n");
+ 
+ 	/* Enhanced mode */
++	x4x_raminit_post(X4X_POST_ENHANCED_MODE);
+ 	set_enhanced_mode(s);
+ 	printk(BIOS_DEBUG, "Done enhanced mode\n");
+ 
+ 	/* Periodic RCOMP */
++	x4x_raminit_post(X4X_POST_PERIODIC_RCOMP);
+ 	mchbar_clrsetbits16(0x160, 0xfff, 0x999);
+ 	mchbar_setbits16(0x1b4, 0x3000);
+ 	mchbar_setbits8(0x130, 1 << 7 | 1 << 1);
+ 	printk(BIOS_DEBUG, "Done PRCOMP\n");
+ 
+ 	/* Power settings */
++	x4x_raminit_post(X4X_POST_POWER_SETTINGS);
+ 	power_settings(s);
+ 	printk(BIOS_DEBUG, "Done power settings\n");
+ 
+@@ -2157,4 +2180,5 @@ void do_raminit(struct sysinfo *s, int fast_boot)
+ 	}
+ 
+ 	printk(BIOS_DEBUG, "Done raminit\n");
++	x4x_raminit_post(X4X_POST_DO_RAMINIT_DONE);
+ }
+diff --git a/src/northbridge/intel/x4x/romstage.c b/src/northbridge/intel/x4x/romstage.c
+index 1695ddda..29e43713 100644
+--- a/src/northbridge/intel/x4x/romstage.c
++++ b/src/northbridge/intel/x4x/romstage.c
+@@ -1,6 +1,7 @@
+ /* SPDX-License-Identifier: GPL-2.0-or-later */
+ 
+ #include <console/console.h>
++#include <cbmem.h>
+ #include <romstage_handoff.h>
+ #include <southbridge/intel/common/pmclib.h>
+ #include <arch/romstage.h>
+@@ -32,6 +33,19 @@ void mainboard_romstage_entry(void)
+ 
+ 	x4x_early_init();
+ 
++	/*
++	 * QEMU's Q35 machine provides usable DRAM, but it does not emulate the
++	 * X4x memory controller or DIMM SPD EEPROMs.  Keep the real early-init
++	 * path above in the diagnostic build, then use QEMU's existing DRAM so
++	 * later coreboot stages and the G41MXE device tree can be exercised.
++	 */
++	if (CONFIG(G41MXE_Q35_SHIM)) {
++		printk(BIOS_NOTICE, "G41MXE Q35 shim: using QEMU-provided DRAM\n");
++		cbmem_recovery(false);
++		romstage_handoff_init(false);
++		return;
++	}
++
+ 	s3_resume = southbridge_detect_s3_resume();
+ 	mb_pre_raminit_setup(s3_resume);
+ 
+diff --git a/src/southbridge/intel/i82801gx/early_init.c b/src/southbridge/intel/i82801gx/early_init.c
+index 71f29b52..61a78fbf 100644
+--- a/src/southbridge/intel/i82801gx/early_init.c
++++ b/src/southbridge/intel/i82801gx/early_init.c
+@@ -50,8 +50,10 @@ void i82801gx_lpc_setup(void)
+ void i82801gx_setup_bars(void)
+ {
+ 	const pci_devfn_t d31f0 = PCI_DEV(0, 0x1f, 0);
++	const u16 pmbase = DEFAULT_PMBASE;
++
+ 	pci_write_config32(d31f0, RCBA, CONFIG_FIXED_RCBA_MMIO_BASE | 1);
+-	pci_write_config32(d31f0, PMBASE, DEFAULT_PMBASE | 1);
++	pci_write_config32(d31f0, PMBASE, pmbase | 1);
+ 	pci_write_config8(d31f0, ACPI_CNTL, ACPI_EN);
+ 
+ 	pci_write_config32(d31f0, GPIOBASE, DEFAULT_GPIOBASE | 1);
+diff --git a/src/southbridge/intel/i82801gx/lpc.c b/src/southbridge/intel/i82801gx/lpc.c
+index e8e7bff8..a8bc9dca 100644
+--- a/src/southbridge/intel/i82801gx/lpc.c
++++ b/src/southbridge/intel/i82801gx/lpc.c
+@@ -152,7 +152,8 @@ static void i82801gx_power_options(struct device *dev)
+ 	 *
+ 	 * If the option is not existent (Laptops), use MAINBOARD_POWER_ON.
+ 	 */
+-	const unsigned int pwr_on = get_uint_option("power_on_after_fail", MAINBOARD_POWER_ON);
++	const unsigned int pwr_on = get_uint_option("power_on_after_fail",
++		CONFIG(BOARD_FOXCONN_G41MXE) ? CONFIG_MAINBOARD_POWER_FAILURE_STATE : MAINBOARD_POWER_ON);
+ 
+ 	reg8 = pci_read_config8(dev, GEN_PMCON_3);
+ 	reg8 &= 0xfe;
+diff --git a/src/southbridge/intel/i82801gx/sata.c b/src/southbridge/intel/i82801gx/sata.c
+index fbbea7c8..09212a02 100644
+--- a/src/southbridge/intel/i82801gx/sata.c
++++ b/src/southbridge/intel/i82801gx/sata.c
+@@ -5,6 +5,7 @@
+ #include <device/pci.h>
+ #include <device/pci_ops.h>
+ #include <device/pci_ids.h>
++#include <option.h>
+ #include "chip.h"
+ #include "i82801gx.h"
+ #include "sata.h"
+@@ -34,6 +35,14 @@ void sata_enable(struct device *dev)
+ {
+ 	/* Get the chip configuration */
+ 	struct southbridge_intel_i82801gx_config *config = dev->chip_info;
++	const unsigned int sata_mode = get_uint_option("sata_mode", config->sata_mode);
++
++	if (sata_mode <= SATA_MODE_IDE_PLAIN) {
++		config->sata_mode = sata_mode;
++	} else {
++		printk(BIOS_WARNING, "Invalid SATA mode %u, using board default %u\n",
++		       sata_mode, config->sata_mode);
++	}
+ 
+ 	if (config->sata_mode == SATA_MODE_AHCI) {
+ 		/* Check if the southbridge supports AHCI */
+diff --git a/src/superio/ite/common/env_ctrl.c b/src/superio/ite/common/env_ctrl.c
+index dffd6e4c..a7d9ee46 100644
+--- a/src/superio/ite/common/env_ctrl.c
++++ b/src/superio/ite/common/env_ctrl.c
+@@ -130,9 +130,14 @@ static void enable_tmpin(const u16 base, const u8 tmpin,
+ 
+ 		break;
+ 	case THERMAL_DIODE:
++		/* IT8720F retains the previous analog mode across warm resets. */
++		if (CONFIG(SUPERIO_ITE_IT8720F))
++			reg &= ~ITE_EC_ADC_TEMP_RESISTOR_MODE(tmpin);
+ 		reg |= ITE_EC_ADC_TEMP_DIODE_MODE(tmpin);
+ 		break;
+ 	case THERMAL_RESISTOR:
++		if (CONFIG(SUPERIO_ITE_IT8720F))
++			reg &= ~ITE_EC_ADC_TEMP_DIODE_MODE(tmpin);
+ 		reg |= ITE_EC_ADC_TEMP_RESISTOR_MODE(tmpin);
+ 		break;
+ 	default:
+diff --git a/src/superio/ite/it8720f/chip.h b/src/superio/ite/it8720f/chip.h
+index 2b3dd9da..80833286 100644
+--- a/src/superio/ite/it8720f/chip.h
++++ b/src/superio/ite/it8720f/chip.h
+@@ -5,8 +5,16 @@
+ 
+ #include <superio/ite/common/env_ctrl_chip.h>
+ 
++enum ite_ec_fan_profile {
++	ITE_FAN_PROFILE_SILENT,
++	ITE_FAN_PROFILE_BALANCED,
++	ITE_FAN_PROFILE_PERFORMANCE,
++	ITE_FAN_PROFILE_FULL_SPEED,
++};
++
+ struct superio_ite_it8720f_config {
+ 	struct ite_ec_config ec;
++	bool use_fan_profile;
+ };
+ 
+ #endif /* SUPERIO_ITE_IT8720F_CHIP_H */
+diff --git a/src/superio/ite/it8720f/superio.c b/src/superio/ite/it8720f/superio.c
+index b51e768a..9398ceb2 100644
+--- a/src/superio/ite/it8720f/superio.c
++++ b/src/superio/ite/it8720f/superio.c
+@@ -1,7 +1,9 @@
+ /* SPDX-License-Identifier: GPL-2.0-or-later */
+ 
++#include <console/console.h>
+ #include <device/device.h>
+ #include <device/pnp.h>
++#include <option.h>
+ #include <pc80/keyboard.h>
+ #include <superio/ite/common/env_ctrl.h>
+ #include <superio/conf_mode.h>
+@@ -10,6 +12,57 @@
+ #include "chip.h"
+ #include "it8720f.h"
+ 
++static void apply_fan_profile(struct ite_ec_config *ec)
++{
++	struct ite_ec_fan_config *fan;
++	const unsigned int profile = get_uint_option("fan_profile",
++						     ITE_FAN_PROFILE_BALANCED);
++
++	if (profile > ITE_FAN_PROFILE_FULL_SPEED) {
++		printk(BIOS_WARNING, "IT8720F: invalid fan profile %u, using board defaults\n",
++		       profile);
++		return;
++	}
++
++	for (size_t i = 0; i < 2; i++) {
++		const unsigned int selected = CONFIG(G41MXE_ASUS_SETTINGS) ?
++			get_uint_option(i ? "cpu_fan_profile" : "chassis_fan_profile", profile) :
++			profile;
++		fan = &ec->fan[i];
++		if (selected > ITE_FAN_PROFILE_FULL_SPEED)
++			continue;
++
++		if (selected == ITE_FAN_PROFILE_FULL_SPEED) {
++			fan->mode = FAN_MODE_ON;
++			continue;
++		}
++
++		fan->mode = FAN_SMART_AUTOMATIC;
++		fan->smart.smoothing = 1;
++
++		switch (selected) {
++		case ITE_FAN_PROFILE_SILENT:
++			fan->smart.tmp_off = 30;
++			fan->smart.tmp_start = 35;
++			fan->smart.tmp_full = 75;
++			fan->smart.pwm_start = 15;
++			fan->smart.slope = 6;
++			break;
++		case ITE_FAN_PROFILE_PERFORMANCE:
++			fan->smart.tmp_off = 20;
++			fan->smart.tmp_start = 25;
++			fan->smart.tmp_full = 55;
++			fan->smart.pwm_start = 35;
++			fan->smart.slope = 12;
++			break;
++		case ITE_FAN_PROFILE_BALANCED:
++		default:
++			/* Keep the board's devicetree curve. */
++			break;
++		}
++	}
++}
++
+ static void it8720f_init(struct device *dev)
+ {
+ 	const struct superio_ite_it8720f_config *conf;
+@@ -24,7 +77,14 @@ static void it8720f_init(struct device *dev)
+ 		res = probe_resource(dev, PNP_IDX_IO0);
+ 		if (!conf || !res)
+ 			break;
+-		ite_ec_init(res->base, &conf->ec);
++		if (conf->use_fan_profile) {
++			struct ite_ec_config ec = conf->ec;
++
++			apply_fan_profile(&ec);
++			ite_ec_init(res->base, &ec);
++		} else {
++			ite_ec_init(res->base, &conf->ec);
++		}
+ 		ite_ec_set_power_state(dev);
+ 		break;
+ 	case IT8720F_KBCK:

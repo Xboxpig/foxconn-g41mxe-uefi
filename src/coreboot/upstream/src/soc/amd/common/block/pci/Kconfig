@@ -1,0 +1,30 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config SOC_AMD_COMMON_BLOCK_PCI
+	bool
+	select SOC_AMD_COMMON_BLOCK_PCI_MMCONF
+	help
+	  This option builds functions used to program PCI interrupt
+	  routing, both PIC and APIC modes.
+
+config SOC_AMD_COMMON_BLOCK_PCI_MMCONF
+	bool
+	help
+	  Selecting this option adds the AMD-common enable_pci_mmconf function
+	  to the build.
+
+config SOC_AMD_COMMON_BLOCK_PCIE_GPP_DRIVER
+	bool
+	depends on SOC_AMD_COMMON_BLOCK_PCI
+	help
+	  Select this option to use AMD common PCIe GPP driver.
+
+config SOC_AMD_COMMON_BLOCK_PCI_DOMAIN_ROOT_PRT
+	bool
+	depends on SOC_AMD_COMMON_BLOCK_PCI
+	depends on HAVE_ACPI_TABLES
+	help
+	  After pci_domain_fill_ssdt(), emit Method(_PRT) on the PCI host bridge
+	  scope for root-bus devices (e.g. PCIe root ports) using
+	  get_pci_routing_table(). Needed when the SoC ACPI sources do not supply
+	  PCI0._PRT.

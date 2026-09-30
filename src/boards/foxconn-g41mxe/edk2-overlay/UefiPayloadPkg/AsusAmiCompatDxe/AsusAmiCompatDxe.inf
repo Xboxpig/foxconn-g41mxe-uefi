@@ -1,0 +1,26 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = AsusAmiCompatDxe
+  FILE_GUID                      = D26E7C5F-50B7-4DAB-9AB2-7C25E0575548
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = AsusAmiCompatEntryPoint
+
+[Sources]
+  AsusAmiCompatDxe.c
+  G41Sensors.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  BaseLib
+  DebugLib
+  IoLib
+  PciLib
+  TimerLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+
+[Depex]
+  TRUE

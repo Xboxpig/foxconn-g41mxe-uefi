@@ -1,0 +1,16 @@
+** Build from MediaTek Internal **
+
+# Version 5.0
+1. Update sspm.bin to support holding ref_ck before USB clock disable during suspend to clear SPM request.
+
+# Version 4.0
+1. Update sspm.bin to fix not entering 26m at first suspend after boot.
+
+# Version 3.0
+1. Update sspm.bin to support MMInfra feature in suspend/resume scenarios.
+
+# Version 2.0
+1. Support AOC feature in suspend/resume scenarios.
+
+# Version 1.0
+1. Initial release.

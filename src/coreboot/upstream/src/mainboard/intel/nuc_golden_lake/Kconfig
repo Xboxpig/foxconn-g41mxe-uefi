@@ -1,0 +1,67 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config BOARD_INTEL_NUC_GOLDEN_LAKE_COMMON
+	def_bool n
+	select BOARD_ROMSIZE_KB_8192
+	select HAVE_ACPI_RESUME
+	select HAVE_ACPI_TABLES
+	select INTEL_INT15
+	select MAINBOARD_HAS_LIBGFXINIT
+	select MAINBOARD_USES_IFD_GBE_REGION
+	select NORTHBRIDGE_INTEL_SANDYBRIDGE
+	select SERIRQ_CONTINUOUS_MODE
+	select SOUTHBRIDGE_INTEL_C216
+	select SUPERIO_NUVOTON_NCT6776
+
+config BOARD_INTEL_DCP847SKE
+	select BOARD_INTEL_NUC_GOLDEN_LAKE_COMMON
+
+config BOARD_INTEL_D33217GKE
+	select BOARD_INTEL_NUC_GOLDEN_LAKE_COMMON
+	select INTEL_GMA_HAVE_VBT
+
+if BOARD_INTEL_NUC_GOLDEN_LAKE_COMMON
+
+menu "Debugging"
+
+config DISABLE_UART_ON_TESTPADS
+	bool "Disable UART on testpads"
+	default y
+	select NO_UART_ON_SUPERIO
+	help
+	  Serial output requires soldering to the testpad next to
+	  NCT5577D pin 18 (txd) and gnd.
+
+endmenu
+
+config MAINBOARD_DIR
+	default "intel/nuc_golden_lake"
+
+config MAINBOARD_PART_NUMBER
+	default "NUC DCP847SKE" if BOARD_INTEL_DCP847SKE
+	default "NUC D33217GKE" if BOARD_INTEL_D33217GKE
+
+config OVERRIDE_DEVICETREE
+	default "variants/\$(CONFIG_VARIANT_DIR)/overridetree.cb"
+
+config VARIANT_DIR
+	default "dcp847ske" if BOARD_INTEL_DCP847SKE
+	default "d33217gke" if BOARD_INTEL_D33217GKE
+
+config USBDEBUG_HCD_INDEX
+	int
+	default 2
+
+config CBFS_SIZE
+	default 0x00640000
+
+config MAINBOARD_SMBIOS_MANUFACTURER
+	string
+	default "Intel Corporation"
+
+config MAINBOARD_SMBIOS_PRODUCT_NAME
+	string
+	default "DCP847SKE" if BOARD_INTEL_DCP847SKE
+	default "D33217GKE" if BOARD_INTEL_D33217GKE
+
+endif # BOARD_INTEL_NUC_GOLDEN_LAKE_COMMON

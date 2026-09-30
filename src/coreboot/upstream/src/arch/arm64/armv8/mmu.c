@@ -1,0 +1,567 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
+
+#include <assert.h>
+#include <stdint.h>
+#include <string.h>
+#include <symbols.h>
+
+#include <arch/barrier.h>
+#include <arch/cache.h>
+#include <arch/lib_helpers.h>
+#include <arch/mmu.h>
+#include <console/console.h>
+
+/* 12 hex digits (48 bits VA) plus 1 for exclusive upper bound. */
+#define ADDR_FMT "0x%013lx"
+
+/* This just caches the next free table slot (okay to do since they fill up from
+ * bottom to top and can never be freed up again). It will reset to its initial
+ * value on stage transition, so we still need to check it for UNUSED_DESC. */
+static uint64_t *next_free_table = (void *)_ttb;
+
+static void print_tag(int level, uint64_t tag)
+{
+	printk(level, tag & MA_MEM_NC ? "non-cacheable | " :
+					"    cacheable | ");
+	printk(level, tag & MA_RO ?	"read-only  | " :
+					"read-write | ");
+	printk(level, tag & MA_NS ?	"non-secure | " :
+					"    secure | ");
+	printk(level, tag & MA_MEM ?	"normal\n" :
+					"device\n");
+}
+
+/* Func : get_block_attr
+ * Desc : Get block descriptor attributes based on the value of tag in memrange
+ * region
+ */
+static uint64_t get_block_attr(unsigned long tag)
+{
+	uint64_t attr;
+
+	attr = (tag & MA_NS) ? BLOCK_NS : 0;
+	attr |= (tag & MA_RO) ? BLOCK_AP_RO : BLOCK_AP_RW;
+	attr |= BLOCK_ACCESS;
+
+	if (tag & MA_MEM) {
+		attr |= BLOCK_SH_INNER_SHAREABLE;
+		if (tag & MA_MEM_NC)
+			attr |= BLOCK_INDEX_MEM_NORMAL_NC << BLOCK_INDEX_SHIFT;
+		else
+			attr |= BLOCK_INDEX_MEM_NORMAL << BLOCK_INDEX_SHIFT;
+	} else {
+		attr |= BLOCK_INDEX_MEM_DEV_NGNRNE << BLOCK_INDEX_SHIFT;
+		attr |= BLOCK_XN;
+	}
+
+	return attr;
+}
+
+/* Func : table_level_name
+ * Desc : Get the descriptions table level name from the given size.
+ */
+static const char *table_level_name(size_t xlat_size)
+{
+	switch (xlat_size) {
+	case L0_XLAT_SIZE:
+		return "L0";
+	case L1_XLAT_SIZE:
+		return "L1";
+	case L2_XLAT_SIZE:
+		return "L2";
+	case L3_XLAT_SIZE:
+		return "L3";
+	default:
+		return "";
+	}
+}
+
+static int init_next_free_table(void *start, void *end)
+{
+	if ((void *)next_free_table < start || (void *)next_free_table >= end)
+		next_free_table = start;
+	while (next_free_table[0] != UNUSED_DESC) {
+		next_free_table += GRANULE_SIZE / sizeof(*next_free_table);
+		if ((void *)next_free_table >= end)
+			return -1;
+	}
+	return 0;
+}
+
+/* Func : setup_new_table
+ * Desc : Get next free table from TTB and set it up to match old parent entry.
+ */
+static uint64_t *setup_new_table(uint64_t desc, size_t xlat_size)
+{
+	if (init_next_free_table(_ttb, _ettb))
+		die("Ran out of page table space!");
+
+	void *frame_base = (void *)(desc & XLAT_ADDR_MASK);
+	const char *level_name = table_level_name(xlat_size);
+	printk(BIOS_DEBUG,
+	       "Backing address range [" ADDR_FMT ":" ADDR_FMT ") with new %s table @%p\n",
+	       (uintptr_t)frame_base,
+	       (uintptr_t)frame_base + (xlat_size << BITS_RESOLVED_PER_LVL),
+	       level_name, next_free_table);
+
+	if (!desc) {
+		memset(next_free_table, 0, GRANULE_SIZE);
+	} else {
+		/* Can reuse old parent entry, but may need to adjust type. */
+		if (xlat_size == L3_XLAT_SIZE)
+			desc |= PAGE_DESC;
+
+		int i = 0;
+		for (; i < GRANULE_SIZE/sizeof(*next_free_table); i++) {
+			next_free_table[i] = desc;
+			desc += xlat_size;
+		}
+	}
+
+	return next_free_table;
+}
+
+/* Func: get_next_level_table
+ * Desc: Check if the table entry is a valid descriptor. If not, initialize new
+ * table, update the entry and return the table addr. If valid, return the addr
+ */
+static uint64_t *get_next_level_table(uint64_t *ptr, size_t xlat_size)
+{
+	uint64_t desc = *ptr;
+
+	if ((desc & DESC_MASK) != TABLE_DESC) {
+		uint64_t *new_table = setup_new_table(desc, xlat_size);
+		desc = ((uint64_t)new_table) | TABLE_DESC;
+		*ptr = desc;
+	}
+	return (uint64_t *)(desc & XLAT_ADDR_MASK);
+}
+
+/* Func : init_xlat_table
+ * Desc : Given a base address and size, it identifies the indices within
+ * different level XLAT tables which map the given base addr. Similar to table
+ * walk, except that all invalid entries during the walk are updated
+ * accordingly. On success, it returns the size of the block/page addressed by
+ * the final table.
+ */
+static uint64_t init_xlat_table(uint64_t base_addr,
+				uint64_t size,
+				uint64_t tag)
+{
+	uint64_t l0_index = (base_addr & L0_ADDR_MASK) >> L0_ADDR_SHIFT;
+	uint64_t l1_index = (base_addr & L1_ADDR_MASK) >> L1_ADDR_SHIFT;
+	uint64_t l2_index = (base_addr & L2_ADDR_MASK) >> L2_ADDR_SHIFT;
+	uint64_t l3_index = (base_addr & L3_ADDR_MASK) >> L3_ADDR_SHIFT;
+	uint64_t *table = (uint64_t *)_ttb;
+	uint64_t desc;
+	uint64_t attr = get_block_attr(tag);
+
+	/* L0 entry stores a table descriptor (doesn't support blocks) */
+	table = get_next_level_table(&table[l0_index], L1_XLAT_SIZE);
+
+	/* L1 table lookup */
+	if ((size >= L1_XLAT_SIZE) &&
+	    IS_ALIGNED(base_addr, (1UL << L1_ADDR_SHIFT))) {
+			/* If block address is aligned and size is greater than
+			 * or equal to size addressed by each L1 entry, we can
+			 * directly store a block desc */
+			desc = base_addr | BLOCK_DESC | attr;
+			table[l1_index] = desc;
+			/* L2 lookup is not required */
+			return L1_XLAT_SIZE;
+	}
+
+	/* L1 entry stores a table descriptor */
+	table = get_next_level_table(&table[l1_index], L2_XLAT_SIZE);
+
+	/* L2 table lookup */
+	if ((size >= L2_XLAT_SIZE) &&
+	    IS_ALIGNED(base_addr, (1UL << L2_ADDR_SHIFT))) {
+		/* If block address is aligned and size is greater than
+		 * or equal to size addressed by each L2 entry, we can
+		 * directly store a block desc */
+		desc = base_addr | BLOCK_DESC | attr;
+		table[l2_index] = desc;
+		/* L3 lookup is not required */
+		return L2_XLAT_SIZE;
+	}
+
+	/* L2 entry stores a table descriptor */
+	table = get_next_level_table(&table[l2_index], L3_XLAT_SIZE);
+
+	/* L3 table lookup */
+	desc = base_addr | PAGE_DESC | attr;
+	table[l3_index] = desc;
+	return L3_XLAT_SIZE;
+}
+
+/* Func : sanity_check
+ * Desc : Check address/size alignment of a table or page.
+ */
+static void sanity_check(uint64_t addr, uint64_t size)
+{
+	assert(!(addr & GRANULE_SIZE_MASK) &&
+	       !(size & GRANULE_SIZE_MASK) &&
+	       (addr + size < (1UL << BITS_PER_VA)) &&
+	       size >= GRANULE_SIZE);
+}
+
+/* Func : get_pte
+ * Desc : Returns the page table entry governing a specific address. */
+static uint64_t get_pte(void *addr)
+{
+	int shift = L0_ADDR_SHIFT;
+	uint64_t *pte = (uint64_t *)_ttb;
+
+	while (1) {
+		int index = ((uintptr_t)addr >> shift) &
+			    ((1UL << BITS_RESOLVED_PER_LVL) - 1);
+
+		if ((pte[index] & DESC_MASK) != TABLE_DESC ||
+		    shift <= GRANULE_SIZE_SHIFT)
+			return pte[index];
+
+		pte = (uint64_t *)(pte[index] & XLAT_ADDR_MASK);
+		shift -= BITS_RESOLVED_PER_LVL;
+	}
+}
+
+/* Func : assert_correct_ttb_mapping
+ * Desc : Asserts that mapping for addr matches the access type used by the
+ * page table walk (i.e. addr is correctly mapped to be part of the TTB). */
+static void assert_correct_ttb_mapping(void *addr)
+{
+	uint64_t pte = get_pte(addr);
+	assert(((pte >> BLOCK_INDEX_SHIFT) & BLOCK_INDEX_MASK)
+	       == BLOCK_INDEX_MEM_NORMAL && !(pte & BLOCK_NS));
+}
+
+
+/* Decodes and prints the architectural attributes of a PTE. */
+static void print_pte_attributes(uint64_t pte)
+{
+	/* Invalid/Unused entries */
+	if (pte == 0 || (pte & DESC_MASK) == INVALID_DESC)
+		return;
+
+	printk(BIOS_INFO, "  Attributes: ");
+	printk(BIOS_INFO, (pte & BLOCK_NS) ? "Non-Secure | " : "Secure | ");
+	printk(BIOS_INFO, (pte & BLOCK_AP_RO) ? "Read-Only | " : "Read-Write | ");
+	printk(BIOS_INFO, (pte & BLOCK_ACCESS) ? "Accessed | " : "Not Accessed | ");
+	printk(BIOS_INFO, (pte & BLOCK_XN) ? "Execute-Never | " : "Executable | ");
+
+	uint64_t sh = pte & BLOCK_SH_MASK;
+	switch (sh) {
+	case BLOCK_SH_NON_SHAREABLE:
+		printk(BIOS_INFO, "Non-Shareable | ");
+		break;
+	case BLOCK_SH_UNPREDICTABLE:
+		printk(BIOS_INFO, "Unpredictable Shareability | ");
+		break;
+	case BLOCK_SH_OUTER_SHAREABLE:
+		printk(BIOS_INFO, "Outer-Shareable | ");
+		break;
+	case BLOCK_SH_INNER_SHAREABLE:
+		printk(BIOS_INFO, "Inner-Shareable | ");
+		break;
+	default:
+		printk(BIOS_INFO, "Unknown Shareability (0x%llx) | ", sh);
+		break;
+	}
+
+	uint64_t index = (pte >> BLOCK_INDEX_SHIFT) & BLOCK_INDEX_MASK;
+	switch (index) {
+	case BLOCK_INDEX_MEM_DEV_NGNRNE:
+		printk(BIOS_INFO, "Device NGNRNE");
+		break;
+	case BLOCK_INDEX_MEM_DEV_NGNRE:
+		printk(BIOS_INFO, "Device NGNRE");
+		break;
+	case BLOCK_INDEX_MEM_DEV_GRE:
+		printk(BIOS_INFO, "Device GRE");
+		break;
+	case BLOCK_INDEX_MEM_NORMAL_NC:
+		printk(BIOS_INFO, "Normal Non-Cacheable");
+		break;
+	case BLOCK_INDEX_MEM_NORMAL:
+		printk(BIOS_INFO, "Normal Cacheable (WBWAC)");
+		break;
+	default:
+		printk(BIOS_INFO, "Unknown Memory Type Index (%llu)", index);
+		break;
+	}
+	printk(BIOS_INFO, "\n");
+}
+
+/* Structure to hold the state of the last printed range */
+struct last_mmu_entry {
+	uint64_t start;
+	uint64_t end;
+	uint64_t pte;
+	const char *desc_type;
+	bool valid;
+};
+
+/* Function to print the accumulated range and reset the state */
+static void print_and_reset_last_range(struct last_mmu_entry *last)
+{
+	if (last->valid) {
+		printk(BIOS_INFO, "  Mapping [" ADDR_FMT ":" ADDR_FMT ") -> PTE: 0x%016llx (%s)\n",
+			  (uintptr_t)last->start, (uintptr_t)last->end, last->pte, last->desc_type);
+		print_pte_attributes(last->pte);
+		last->valid = false;
+	}
+}
+
+/*
+ * Prints the MMU entries for a given address range, merging contiguous
+ * mappings with identical attributes.
+ */
+static void print_mmu_range(uint64_t base_addr, size_t size)
+{
+	if (!CONFIG(ARCH_ARM64_DEBUG_MMU))
+		return;
+
+	uint64_t current_addr = base_addr;
+	uint64_t end_addr = base_addr + size;
+
+	printk(BIOS_INFO, "Dumping MMU entries for range [" ADDR_FMT ":" ADDR_FMT ")\n",
+		(uintptr_t)base_addr, (uintptr_t)end_addr);
+
+	struct last_mmu_entry last = { .valid = false };
+
+	while (current_addr < end_addr) {
+		int shift = L0_ADDR_SHIFT;
+		uint64_t *pte_ptr = (uint64_t *)_ttb;
+		uint64_t pte = 0;
+		uint64_t mapped_size = 0;
+		const char *desc_type = "UNKNOWN";
+
+		/* Perform a table walk to find the terminal PTE and its size. */
+		while (shift >= L3_ADDR_SHIFT) {
+			int index = (current_addr >> shift) & ((1UL << BITS_RESOLVED_PER_LVL) - 1);
+			pte = pte_ptr[index];
+
+			if (pte == 0) {
+				desc_type = "UNMAPPED";
+				mapped_size = 1UL << shift;
+				break;
+			} else if ((pte & DESC_MASK) == TABLE_DESC) {
+				if (shift == L3_ADDR_SHIFT) {
+					/* At L3, TABLE_DESC (0x3) is actually PAGE_DESC */
+					desc_type = "PAGE";
+					mapped_size = GRANULE_SIZE;
+					break;
+				} else {
+					/* At L0, L1, L2, it means TABLE_DESC, continue walk */
+					pte_ptr = (uint64_t *)(pte & XLAT_ADDR_MASK);
+					shift -= BITS_RESOLVED_PER_LVL;
+				}
+			} else if ((pte & DESC_MASK) == BLOCK_DESC) {
+				desc_type = "BLOCK";
+				mapped_size = 1UL << shift;
+				break;
+			} else {
+				desc_type = "IMPOSSIBLE";
+				mapped_size = 1UL << shift;
+				printk(BIOS_ERR, "Unexpected descriptor (PTE: 0x%016llx) found!\n", pte);
+				break;
+			}
+		}
+
+		/* Align the start address to the beginning of the mapped block/page. */
+		uint64_t start_of_mapping = ALIGN_DOWN(current_addr, mapped_size);
+		uint64_t current_print_end = start_of_mapping + mapped_size;
+
+		if (last.valid && start_of_mapping == last.end &&
+			(pte & ~XLAT_ADDR_MASK) == (last.pte & ~XLAT_ADDR_MASK)) {
+			/* Extend the last range */
+			last.end = current_print_end;
+		} else {
+			/* Print the previous range */
+			print_and_reset_last_range(&last);
+			/* Start a new range */
+			last.start = start_of_mapping;
+			last.end = current_print_end;
+			last.pte = pte;
+			last.desc_type = desc_type;
+			last.valid = true;
+		}
+
+		/* Advance current_addr */
+		current_addr = start_of_mapping + mapped_size;
+		if (current_addr <= start_of_mapping) {
+			printk(BIOS_ERR, "Address overflow in %s!\n", __func__);
+			break;
+		}
+	}
+
+	/* Print the very last accumulated range */
+	print_and_reset_last_range(&last);
+	printk(BIOS_INFO, "\n");
+}
+
+/* Func : mmu_config_range
+ * Desc : This function repeatedly calls init_xlat_table with the base
+ * address. Based on size returned from init_xlat_table, base_addr is updated
+ * and subsequent calls are made for initializing the xlat table until the whole
+ * region is initialized.
+ */
+void mmu_config_range(void *start, size_t size, uint64_t tag)
+{
+	uint64_t base_addr = (uintptr_t)start;
+	uint64_t temp_size = size;
+
+	printk(BIOS_INFO, "Mapping address range [" ADDR_FMT ":" ADDR_FMT ") as ",
+	       (uintptr_t)start, (uintptr_t)start + size);
+	print_tag(BIOS_INFO, tag);
+
+	sanity_check(base_addr, temp_size);
+	assert(raw_read_ttbr0() == (uint64_t)_ttb);
+
+	while (temp_size)
+		temp_size -= init_xlat_table(base_addr + (size - temp_size),
+					     temp_size, tag);
+
+	/* ARMv8 MMUs snoop L1 data cache, no need to flush it. */
+	dsb();
+	tlbiall();
+	dsb();
+	isb();
+
+	print_mmu_range(0, 1UL << BITS_PER_VA);
+}
+
+/* Func : mmu_init
+ * Desc : Initialize MMU registers and page table memory region. This must be
+ * called exactly ONCE PER BOOT before trying to configure any mappings.
+ */
+void mmu_init(void)
+{
+	/* Initially mark all table slots unused (first PTE == UNUSED_DESC). */
+	uint64_t *table = (uint64_t *)_ttb;
+	for (; _ettb - (u8 *)table > 0; table += GRANULE_SIZE/sizeof(*table))
+		table[0] = UNUSED_DESC;
+
+	/* Initialize the root table (L0) to be completely unmapped. */
+	uint64_t *root = setup_new_table(INVALID_DESC, L0_XLAT_SIZE);
+	assert((u8 *)root == _ttb);
+
+	/* Initialize TTBR */
+	raw_write_ttbr0((uintptr_t)root);
+
+	/* Initialize MAIR indices */
+	raw_write_mair(MAIR_ATTRIBUTES);
+
+	/* Initialize TCR flags */
+	raw_write_tcr(TCR_TOSZ | TCR_IRGN0_NM_WBWAC | TCR_ORGN0_NM_WBWAC |
+				 TCR_SH0_IS | TCR_TG0_4KB | TCR_PS_256TB |
+				 TCR_TBI_USED);
+}
+
+/* Func : mmu_save_context
+ * Desc : Save mmu context (registers and ttbr base).
+ */
+void mmu_save_context(struct mmu_context *mmu_context)
+{
+	assert(mmu_context);
+
+	/* Back-up MAIR_ATTRIBUTES */
+	mmu_context->mair = raw_read_mair();
+
+	/* Back-up TCR value */
+	mmu_context->tcr = raw_read_tcr();
+}
+
+/* Func : mmu_restore_context
+ * Desc : Restore mmu context using input backed-up context
+ */
+void mmu_restore_context(const struct mmu_context *mmu_context)
+{
+	assert(mmu_context);
+
+	/* Restore TTBR */
+	raw_write_ttbr0((uintptr_t)_ttb);
+
+	/* Restore MAIR indices */
+	raw_write_mair(mmu_context->mair);
+
+	/* Restore TCR flags */
+	raw_write_tcr(mmu_context->tcr);
+
+	/* invalidate tlb since ttbr is updated. */
+	tlb_invalidate_all();
+}
+
+void mmu_enable(void)
+{
+	assert_correct_ttb_mapping(_ttb);
+	assert_correct_ttb_mapping((void *)((uintptr_t)_ettb - 1));
+
+	uint32_t sctlr = raw_read_sctlr();
+	raw_write_sctlr(sctlr | SCTLR_C | SCTLR_M | SCTLR_I);
+
+	isb();
+}
+
+/*
+ * Func : mmu_relocate_ttb
+ * Desc : Relocates a Translation Table Base (TTB) from _preram_ttb
+ * to _postram_ttb. This involves copying the table data and updating
+ * all internal pointers within the translation table entries to reflect
+ * the new location.
+ */
+void mmu_relocate_ttb(void)
+{
+	const uintptr_t old_base = (uintptr_t)_preram_ttb;
+	const uintptr_t new_base = (uintptr_t)_postram_ttb;
+	const uintptr_t offset = new_base - old_base;
+
+	ASSERT_MSG(offset, "TTB relocation is not required.\n");
+
+	/* Ensure that next_free_table pointer is correct. */
+	init_next_free_table(_preram_ttb, _epreram_ttb);
+
+	const size_t used_size = (uintptr_t)next_free_table - old_base;
+	uint64_t *entry;
+	uint64_t *end = (uint64_t *)(new_base + used_size);
+
+	printk(BIOS_INFO, "Relocating TTB: 0x%lx -> 0x%lx (offset 0x%lx)\n",
+		old_base, new_base, offset);
+
+	/* Copy the used TTB region to the new location. */
+	memcpy((void *)new_base, (void *)old_base, used_size);
+
+	/*
+	 * Update all internal table pointers. Since the entire TTB region is
+	 * moved as a single block, every table pointer inside the descriptors
+	 * needs to be adjusted by the same relative offset.
+	 */
+	for (entry = (uint64_t *)new_base; entry < end; entry++) {
+		/*
+		 * In ARMv8, a descriptor with bits [1:0] == 0b11 can be either a
+		 * Table descriptor or a Page descriptor. To differentiate, we
+		 * check the Access Flag (bit 10). Table descriptors do not use
+		 * this bit, whereas we ensure all Page/Block descriptors have it
+		 * set. This relies on TCR.HAFT[42] remaining 0.
+		 */
+		if ((*entry & DESC_MASK) == TABLE_DESC && !(*entry & BLOCK_ACCESS))
+			*entry += offset;
+	}
+
+	/* Mark remaining table slots unused (first PTE == UNUSED_DESC). */
+	for (entry = end; (u8 *)entry < _epostram_ttb; entry += GRANULE_SIZE / sizeof(*entry))
+		*entry = UNUSED_DESC;
+
+	/* Update TTBR0 to point to the new base address. */
+	dsb();
+	raw_write_ttbr0((uintptr_t)new_base);
+	isb();
+
+	tlb_invalidate_all();
+	dsb();
+	isb();
+
+	printk(BIOS_INFO, "TTB relocation is complete.\n");
+	print_mmu_range(0, 1UL << BITS_PER_VA);
+}

@@ -1,0 +1,24 @@
+#!/usr/bin/env sh
+#
+# SPDX-License-Identifier: GPL-2.0-only
+
+# DESCR: Check that saved config files are miniconfigs
+
+LINTDIR="$(
+  cd -- "$(dirname "$0")" > /dev/null 2>&1 || return
+  pwd -P
+)"
+
+# shellcheck source=helper_functions.sh
+. "${LINTDIR}/helper_functions.sh"
+
+# Full .config / defconfig files set these as their own symbols (or as
+# "# CONFIG_* is not set"). Miniconfigs omit them; they are selected from the
+# board Kconfig. Match only those line forms so using CONFIG_MAINBOARD_DIR in
+# a path does not false-positive.
+FULL_CFG_REGEX='^[[:space:]]*CONFIG_MAINBOARD_DIR=|^[[:space:]]*# CONFIG_MAINBOARD_DIR is not set|^[[:space:]]*CONFIG_MAINBOARD_HAS_[A-Za-z0-9_]+=|^[[:space:]]*# CONFIG_MAINBOARD_HAS_[A-Za-z0-9_]+ is not set'
+
+for file in \
+	$(${GREP_FILES} -l -E "${FULL_CFG_REGEX}" configs) ; do \
+		echo "Error: $file seems to be a full config"; \
+	done

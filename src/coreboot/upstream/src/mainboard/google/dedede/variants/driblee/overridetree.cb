@@ -1,0 +1,146 @@
+chip soc/intel/jasperlake
+
+	# USB Port Configuration
+	register "usb2_ports[1]" = "USB2_PORT_EMPTY"	    # None
+	register "usb2_ports[3]" = "USB2_PORT_EMPTY"	    # None
+	register "usb2_ports[4]" = "USB2_PORT_EMPTY"	    # None
+	register "usb2_ports[5]" = "USB2_PORT_MID(OC_SKIP)"	# Camera (UFC)
+	register "usb2_ports[6]" = "USB2_PORT_EMPTY"	    # None
+	register "usb3_ports[1]" = "USB3_PORT_EMPTY"	    # None
+	register "usb3_ports[3]" = "USB3_PORT_EMPTY"	    # None
+
+	register "SerialIoI2cMode[PchSerialIoIndexI2C0]" = "PchSerialIoPci"
+	register "SerialIoI2cMode[PchSerialIoIndexI2C4]" = "PchSerialIoPci"
+
+	# Intel Common SoC Config
+	#+-------------------+---------------------------+
+	#| Field             |  Value                    |
+	#+-------------------+---------------------------+
+	#| I2C0              | Trackpad                  |
+	#| I2C1              |                           |
+	#| I2C2              |                           |
+	#| I2C3              |                           |
+	#| I2C4              | Audio                     |
+	#+-------------------+---------------------------+
+	register "common_soc_config" = "{
+		.i2c[0] = {
+			.speed = I2C_SPEED_FAST,
+		},
+		.i2c[4] = {
+			.speed = I2C_SPEED_FAST,
+		},
+	}"
+
+	register "SerialIoGSpiMode[PchSerialIoIndexGSPI0]" = "PchSerialIoDisabled" # Disable GSPI0
+	register "SerialIoGSpiCsMode[PchSerialIoIndexGSPI0]" = "0"
+
+	device domain 0 on
+		device ref igpu on
+			chip drivers/gfx/generic
+				register "device_count" = "1"
+				# DDIA for eDP
+				register "device[0].name" = ""LCD0""
+				# Internal panel on the first port of the graphics chip
+				register "device[0].type" = "panel"
+
+				device generic 0 on end
+			end
+		end
+		device ref dptf on
+			chip drivers/intel/dptf
+				## Passive Policy
+				register "policies.passive" = "{
+					[0] = DPTF_PASSIVE(CPU, CPU,           90, 10000),
+					[1] = DPTF_PASSIVE(CPU, TEMP_SENSOR_0, 80, 60000),
+					[2] = DPTF_PASSIVE(CPU, TEMP_SENSOR_1, 55, 15000)
+				}"
+
+				## Critical Policy
+				register "policies.critical" = "{
+					[0] = DPTF_CRITICAL(CPU,           105, SHUTDOWN),
+					[1] = DPTF_CRITICAL(TEMP_SENSOR_0, 90, SHUTDOWN),
+					[2] = DPTF_CRITICAL(TEMP_SENSOR_1, 80, SHUTDOWN)
+				}"
+
+				## Power Limits Control
+				register "controls.power_limits" = "{
+					.pl1 = {
+						.min_power = 3000,
+						.max_power = 6000,
+						.time_window_min = 1 * MSECS_PER_SEC,
+						.time_window_max = 1 * MSECS_PER_SEC,
+						.granularity = 200,
+					},
+					.pl2 = {
+						.min_power = 20000,
+						.max_power = 20000,
+						.time_window_min = 1 * MSECS_PER_SEC,
+						.time_window_max = 1 * MSECS_PER_SEC,
+						.granularity = 1000,
+					}
+				}"
+				device generic 0 on end
+			end
+		end
+		device ref south_xhci on
+			chip drivers/usb/acpi
+				device ref xhci_root_hub on
+					chip drivers/usb/acpi
+						register "desc" = ""Camera (UFC)""
+						register "type" = "UPC_TYPE_INTERNAL"
+						device ref usb2_port6 on end
+					end
+				end
+			end
+		end
+		device ref i2c0 on
+			chip drivers/i2c/generic
+				register "hid" = ""ELAN0000""
+				register "desc" = ""ELAN Touchpad""
+				register "irq" = "ACPI_IRQ_WAKE_EDGE_LOW(GPP_B3_IRQ)"
+				register "wake" = "GPE0_DW0_03"
+				register "detect" = "1"
+				device i2c 15 on end
+			end
+			chip drivers/i2c/hid
+				register "generic.hid" = ""GXTP7288""
+				register "generic.desc" = ""Goodix Touchpad""
+				register "generic.irq" = "ACPI_IRQ_LEVEL_LOW(GPP_B3_IRQ)"
+				register "generic.wake" = "GPE0_DW0_03"
+				register "generic.detect" = "1"
+				register "hid_desc_reg_offset" = "0x20"
+				device i2c 2c on end
+			end
+		end
+		device ref i2c4 on
+			chip drivers/i2c/cs42l42
+				register "irq_gpio" = "ACPI_GPIO_IRQ_EDGE_BOTH(GPP_D16)"
+				register "reset_gpio" = "ACPI_GPIO_OUTPUT_ACTIVE_HIGH(GPP_H16)"
+				register "ts_inv" = "true"
+				register "ts_dbnc_rise" = "RISE_DEB_1000_MS"
+				register "ts_dbnc_fall" = "FALL_DEB_0_MS"
+				register "btn_det_init_dbnce" = "100"
+				register "btn_det_event_dbnce" = "10"
+				register "bias_lvls[0]" = "15"
+				register "bias_lvls[1]" = "8"
+				register "bias_lvls[2]" = "4"
+				register "bias_lvls[3]" = "1"
+				register "hs_bias_ramp_rate" = "HSBIAS_RAMP_SLOW"
+				register "hs_bias_sense_disable" = "true"
+				device i2c 48 on end
+			end
+		end
+		device ref pch_espi on
+			chip drivers/pc80/tpm
+				device pnp 0c31.0 on end # Discrete TPM
+			end
+		end
+		device ref hda on
+			chip drivers/generic/max98357a
+				register "hid" = ""MX98360A""
+				register "sdmode_gpio" =  "ACPI_GPIO_OUTPUT_ACTIVE_HIGH(GPP_D17)"
+				device generic 0 on end
+			end
+		end
+	end
+end

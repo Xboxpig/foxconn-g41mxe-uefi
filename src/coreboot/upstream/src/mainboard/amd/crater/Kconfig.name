@@ -1,0 +1,4 @@
+comment "Crater"
+
+config BOARD_AMD_CRATER
+	bool "->  Crater for V2000A SoC"

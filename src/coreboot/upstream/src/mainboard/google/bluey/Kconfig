@@ -1,0 +1,461 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config BOARD_GOOGLE_BLUEY_COMMON
+	def_bool n
+	select COMMON_CBFS_SPI_WRAPPER
+	select ELOG
+	select MAINBOARD_HAS_CHROMEOS
+	select SOC_QUALCOMM_PCIE_ASYNCHRONOUS_INIT
+	select SPI_FLASH
+	select SPI_FLASH_FORCE_4_BYTE_ADDR_MODE
+	select SPI_FLASH_INCLUDE_ALL_DRIVERS
+	select QC_SKIP_SOC_DEBUG_FEATURES_IN_RECOVERY
+
+config BOARD_GOOGLE_BASEBOARD_BLUEY
+	def_bool n
+	select BOARD_GOOGLE_BLUEY_COMMON
+
+config BOARD_GOOGLE_MODEL_BLUEY
+	def_bool n
+	select BOARD_GOOGLE_BASEBOARD_BLUEY
+	select BOARD_ROMSIZE_KB_65536
+	select FW_CONFIG
+	select MAINBOARD_HAS_FINGERPRINT_VIA_USB
+	select MISSING_BOARD_RESET
+	select SOC_QUALCOMM_CDT
+
+config BOARD_GOOGLE_BLUEY
+	select BOARD_GOOGLE_MODEL_BLUEY
+	select SOC_QUALCOMM_X1P42100
+
+config BOARD_GOOGLE_BLUEYH
+	select BOARD_GOOGLE_MODEL_BLUEY
+	select SOC_QUALCOMM_HAMOA
+
+config BOARD_GOOGLE_MODEL_QUENBI
+	def_bool n
+	select BOARD_GOOGLE_BASEBOARD_BLUEY
+	select BOARD_ROMSIZE_KB_32768
+	select DAP_USE_SMB2
+	select EC_GOOGLE_CHROMEEC_BATTERY_SOC_DYNAMIC
+	select HAVE_DEBUG_ACCESS_PORT_SOURCE_SINK
+	select MAINBOARD_HAS_CAMERA_VIA_USB
+	select MAINBOARD_HAS_CHROME_EC
+	select MAINBOARD_HAS_FINGERPRINT_VIA_SPI
+	select MAINBOARD_HAS_GOOGLE_TPM
+	select SPI_FREQ_75MHZ
+
+config BOARD_GOOGLE_MODEL_QUARTZ
+	def_bool n
+	select BOARD_GOOGLE_BASEBOARD_BLUEY
+	select BOARD_ROMSIZE_KB_32768
+	select EC_GOOGLE_CHROMEEC_BATTERY_SOC_DYNAMIC
+	select EC_GOOGLE_CHROMEEC_LED_CONTROL
+	select MAINBOARD_HAS_CAMERA_VIA_USB
+	select MAINBOARD_HAS_CHROME_EC
+	select MAINBOARD_HAS_FINGERPRINT_VIA_USB
+	select MAINBOARD_HAS_GOOGLE_TPM
+	select MAINBOARD_RAMDUMP_LED_NOTIFICATION
+	select SPI_FREQ_75MHZ
+
+config BOARD_GOOGLE_QUENBI
+	select BOARD_GOOGLE_MODEL_QUENBI
+	select SOC_QUALCOMM_X1P42100
+
+config BOARD_GOOGLE_QUENBIH
+	select BOARD_GOOGLE_MODEL_QUENBI
+	select SOC_QUALCOMM_HAMOA
+
+config BOARD_GOOGLE_QUARTZ
+	select BOARD_GOOGLE_MODEL_QUARTZ
+	select DAM_SINK_SENSOR_Z1_OPTIMIZATION
+	select DAP_USE_SMB1
+	select HAVE_DEBUG_ACCESS_PORT_SOURCE_SINK
+	select SOC_QUALCOMM_HAMOA
+	select MAINBOARD_HAS_PS8820_RETIMER
+	select MAINBOARD_NO_USB_A_PORT
+	select MAINBOARD_SUPPORTS_PARALLEL_CHARGING
+
+config BOARD_GOOGLE_MODEL_MICA
+	def_bool n
+	select BOARD_GOOGLE_BASEBOARD_BLUEY
+	select BOARD_ROMSIZE_KB_32768
+	select EC_GOOGLE_CHROMEEC_LED_CONTROL
+	select EC_GOOGLE_CHROMEEC_BATTERY_SOC_DYNAMIC
+	select MAINBOARD_HAS_BACKLIGHT_PWM
+	select MAINBOARD_HAS_CAMERA_VIA_USB
+	select MAINBOARD_HAS_CHROME_EC
+	select MAINBOARD_HAS_FINGERPRINT_VIA_USB
+	select MAINBOARD_HAS_GOOGLE_TPM
+	select MAINBOARD_LCD_FAIL_DETECT
+	select MAINBOARD_RAMDUMP_LED_NOTIFICATION
+	select SPI_FREQ_100MHZ
+
+config BOARD_GOOGLE_MODEL_MERU
+	def_bool n
+	select BOARD_GOOGLE_BASEBOARD_BLUEY
+	select BOARD_ROMSIZE_KB_32768
+	select EC_GOOGLE_CHROMEEC_BATTERY_SOC_DYNAMIC
+	select EC_GOOGLE_CHROMEEC_LED_CONTROL
+	select MAINBOARD_HAS_CHROME_EC
+	select MAINBOARD_HAS_FINGERPRINT_VIA_USB
+	select MAINBOARD_HAS_GOOGLE_TPM
+	select MAINBOARD_HAS_UFS
+	select MAINBOARD_RAMDUMP_LED_NOTIFICATION
+	select SPI_FREQ_75MHZ
+
+config BOARD_GOOGLE_MODEL_PIC
+	def_bool n
+	select BOARD_GOOGLE_BASEBOARD_BLUEY
+	select BOARD_ROMSIZE_KB_32768
+	select EC_GOOGLE_CHROMEEC_LED_CONTROL
+	select EC_GOOGLE_CHROMEEC_BATTERY_SOC_DYNAMIC
+	select MAINBOARD_HAS_CAMERA_VIA_USB
+	select MAINBOARD_HAS_CHROME_EC
+	select MAINBOARD_HAS_FINGERPRINT_VIA_USB
+	select MAINBOARD_HAS_GOOGLE_TPM
+	select MAINBOARD_RAMDUMP_LED_NOTIFICATION
+	select SPI_FREQ_75MHZ
+
+config BOARD_GOOGLE_MODEL_ANNITE
+	def_bool n
+	select BOARD_GOOGLE_BASEBOARD_BLUEY
+	select BOARD_ROMSIZE_KB_32768
+	select EC_GOOGLE_CHROMEEC_LED_CONTROL
+	select EC_GOOGLE_CHROMEEC_BATTERY_SOC_DYNAMIC
+	select MAINBOARD_HAS_BACKLIGHT_PWM
+	select MAINBOARD_HAS_CAMERA_VIA_USB
+	select MAINBOARD_HAS_CHROME_EC
+	select MAINBOARD_HAS_FINGERPRINT_VIA_USB
+	select MAINBOARD_HAS_GOOGLE_TPM
+	select MAINBOARD_RAMDUMP_LED_NOTIFICATION
+	select SPI_FREQ_75MHZ
+
+config BOARD_GOOGLE_MODEL_ANETO
+	def_bool n
+	select BOARD_GOOGLE_BASEBOARD_BLUEY
+	select BOARD_ROMSIZE_KB_32768
+	select EC_GOOGLE_CHROMEEC_LED_CONTROL
+	select EC_GOOGLE_CHROMEEC_BATTERY_SOC_DYNAMIC
+	select MAINBOARD_HAS_CAMERA_VIA_USB
+	select MAINBOARD_HAS_CHROME_EC
+	select MAINBOARD_HAS_FINGERPRINT_VIA_USB
+	select MAINBOARD_HAS_GOOGLE_TPM
+	select MAINBOARD_HAS_UFS
+	select MAINBOARD_RAMDUMP_LED_NOTIFICATION
+	select SPI_FREQ_100MHZ
+
+config BOARD_GOOGLE_MICA
+	select BOARD_GOOGLE_MODEL_MICA
+	select DAP_USE_SMB1
+	select HAVE_DEBUG_ACCESS_PORT_SOURCE_SINK
+	select MAINBOARD_HAS_PS8820_RETIMER
+	select MAINBOARD_NO_USB_A_PORT
+	select SOC_QUALCOMM_HAMOA
+
+config BOARD_GOOGLE_ANNITE
+	select BOARD_GOOGLE_MODEL_ANNITE
+	select DAP_USE_SMB1
+	select HAVE_DEBUG_ACCESS_PORT_SOURCE_SINK
+	select MAINBOARD_HAS_PS8820_RETIMER
+	select MAINBOARD_NO_USB_A_PORT
+	select SOC_QUALCOMM_X1P42100
+
+config BOARD_GOOGLE_MERU
+	select BOARD_GOOGLE_MODEL_MERU
+	select DAP_USE_SMB1
+	select HAVE_DEBUG_ACCESS_PORT_SOURCE_SINK
+	select MAINBOARD_HAS_PS8820_RETIMER
+	select MAINBOARD_NO_USB_A_PORT
+	select SOC_QUALCOMM_X1P42100
+
+config BOARD_GOOGLE_PIC
+	select BOARD_GOOGLE_MODEL_PIC
+	select DAP_USE_SMB1
+	select HAVE_DEBUG_ACCESS_PORT_SOURCE_SINK
+	select MAINBOARD_HAS_PS8820_RETIMER
+	select MAINBOARD_NO_USB_A_PORT
+	select SOC_QUALCOMM_X1P42100
+
+config BOARD_GOOGLE_ANETO
+	select BOARD_GOOGLE_MODEL_ANETO
+	select DAP_USE_SMB1
+	select HAVE_DEBUG_ACCESS_PORT_SOURCE_SINK
+	select MAINBOARD_HAS_PS8820_RETIMER
+	select SOC_QUALCOMM_X1P42100
+
+if BOARD_GOOGLE_BLUEY_COMMON
+
+config MAINBOARD_DIR
+	default "google/bluey"
+
+config MAINBOARD_HAS_FINGERPRINT_VIA_SPI
+	bool
+	default n
+	help
+	  Enable this option if your mainboard's fingerprint reader
+	  is connected via the SPI interface.
+
+config MAINBOARD_HAS_FINGERPRINT_VIA_USB
+	bool
+	default n
+	help
+	  Enable this option if your mainboard's fingerprint reader
+	  is connected via the USB interface.
+
+config MAINBOARD_HAS_FINGERPRINT
+	bool
+	default y if MAINBOARD_HAS_FINGERPRINT_VIA_SPI || MAINBOARD_HAS_FINGERPRINT_VIA_USB
+	help
+	  Enable this option if your mainboard is equipped with an onboard
+	  fingerprint reader. This could be connected via SPI or USB.
+
+config MAINBOARD_HAS_SD_CONTROLLER
+	bool
+	default n
+	help
+	  Enable this option if your mainboard is equipped with SD card controller.
+
+config MAINBOARD_HAS_UFS
+	bool
+	default n
+	help
+	  Enable this option if your mainboard is equipped with UFS storage.
+
+config MAINBOARD_HAS_PS8820_RETIMER
+	bool
+	default n
+	help
+	  Enable this option if your mainboard is equipped with a PS8820 retimer.
+
+config MAINBOARD_LCD_FAIL_DETECT
+	bool "Enable LCD failure detection via LED"
+	default n
+	help
+	  Execute a hardware status check on the LCD panel during the preboot
+	  phase. The SoC attempts to read EDID/DPCD information from the display
+	  and performs Link Training. If either operation fails, the SoC sends
+	  a diagnostic command to the EC via SPI to signal the failure state.
+
+config MAINBOARD_LIGHTBAR_CMD_SEQ_DIAG_LCD
+	depends on MAINBOARD_LCD_FAIL_DETECT
+	int
+	default 101 if BOARD_GOOGLE_MODEL_MICA
+	default 0
+	help
+	  The lightbar command sequence for triggering LCD diagnosis lightbar pattern.
+
+config MAINBOARD_NO_USB_A_PORT
+	bool
+	default n
+	help
+	  Enable this option if your mainboard is not equipped with USB-A port.
+
+config MAINBOARD_SUPPORTS_PARALLEL_CHARGING
+	bool
+	default n
+	help
+	  Enable this option if your mainboard supports parallel charging.
+
+config HAVE_DEBUG_ACCESS_PORT_SOURCE_SINK
+	bool
+	default n
+	help
+	  Enable this option to allow source and sink modes on the debug access port.
+
+config DAP_SMB_SLAVE_ID
+	depends on HAVE_DEBUG_ACCESS_PORT_SOURCE_SINK
+	hex
+	default 0x07 if DAP_USE_SMB1
+	default 0x0a if DAP_USE_SMB2
+	help
+	  The Slave ID for the Debug Access Port communication.
+
+config DAP_USE_SMB1
+	depends on HAVE_DEBUG_ACCESS_PORT_SOURCE_SINK
+	bool
+	help
+	  Select this to use SMB1 for DAP.
+
+config DAP_USE_SMB2
+	depends on HAVE_DEBUG_ACCESS_PORT_SOURCE_SINK
+	bool
+	help
+	  Select this to use SMB2 for DAP.
+
+config DAM_SINK_SENSOR_Z1_OPTIMIZATION
+	bool
+	default n
+	help
+	  Enable this option to write the PMIC PSI workaround flag (address 0x7297)
+	  after QCLib loading. This is required for boards that have
+	  the TPD6s3000 protection IC to prevent high power consumption in the
+	  Z1 (off) state.
+
+config MAINBOARD_HAS_GOOGLE_TPM
+	bool
+	default n
+	select I2C_TPM
+	select MAINBOARD_HAS_TPM2
+	select TPM_GOOGLE_TI50
+	help
+	  Enable this option if your mainboard is equipped with Google TPM aka GSC.
+
+config MAINBOARD_HAS_CHROME_EC
+	bool
+	default n
+	select EC_GOOGLE_CHROMEEC
+	select EC_GOOGLE_CHROMEEC_RTC
+	select EC_GOOGLE_CHROMEEC_SPI
+	select EC_GOOGLE_CHROMEEC_SWITCHES if VBOOT
+	select RTC
+	help
+	  Enable this option if your mainboard is equipped with Chrome EC.
+
+config MAINBOARD_HAS_BACKLIGHT_PWM
+	bool
+	default n
+	help
+	  Enable this option if your mainboard has PWM control for display
+	  backlight.
+
+config MAINBOARD_HAS_CAMERA_VIA_USB
+	bool
+	default n
+	help
+	  Enable this option if your mainboard's onboard camera
+	  is connected via the USB interface.
+
+config VBOOT
+	select VBOOT_ALWAYS_ENABLE_DISPLAY
+	select VBOOT_LID_SWITCH if MAINBOARD_HAS_CHROME_EC
+	select VBOOT_MOCK_SECDATA if BOARD_GOOGLE_MODEL_BLUEY
+	select VBOOT_NO_BOARD_SUPPORT if BOARD_GOOGLE_MODEL_BLUEY
+	select VBOOT_VBNV_FLASH
+
+##########################################################
+#### Update below when adding a new derivative board. ####
+##########################################################
+
+config DEVICETREE
+	default "devicetree_bluey.cb" if BOARD_GOOGLE_MODEL_BLUEY
+
+config MAINBOARD_PART_NUMBER
+	default "Bluey" if BOARD_GOOGLE_MODEL_BLUEY
+	default "Quenbi" if BOARD_GOOGLE_QUENBI
+	default "QuenbiH" if BOARD_GOOGLE_QUENBIH
+	default "Quartz" if BOARD_GOOGLE_MODEL_QUARTZ
+	default "Mica" if BOARD_GOOGLE_MODEL_MICA
+	default "Annite" if BOARD_GOOGLE_MODEL_ANNITE
+	default "Meru" if BOARD_GOOGLE_MODEL_MERU
+	default "Pic" if BOARD_GOOGLE_MODEL_PIC
+	default "Aneto" if BOARD_GOOGLE_MODEL_ANETO
+
+config DRIVER_TPM_I2C_BUS
+	depends on I2C_TPM
+	hex
+	default 0xa if BOARD_GOOGLE_MODEL_QUENBI
+	default 0xa if BOARD_GOOGLE_MODEL_QUARTZ
+	default 0xa if BOARD_GOOGLE_MODEL_MICA
+	default 0xa if BOARD_GOOGLE_MODEL_ANNITE
+	default 0xa if BOARD_GOOGLE_MODEL_MERU
+	default 0xa if BOARD_GOOGLE_MODEL_PIC
+	default 0xa if BOARD_GOOGLE_MODEL_ANETO
+	default 0x10
+
+config DRIVER_TPM_I2C_ADDR
+	default 0x50
+
+config EC_GOOGLE_CHROMEEC_SPI_BUS
+	depends on EC_GOOGLE_CHROMEEC
+	hex
+	default 0xd if BOARD_GOOGLE_MODEL_QUENBI
+	default 0xd if BOARD_GOOGLE_MODEL_QUARTZ
+	default 0xd if BOARD_GOOGLE_MODEL_MICA
+	default 0xd if BOARD_GOOGLE_MODEL_ANNITE
+	default 0xd if BOARD_GOOGLE_MODEL_MERU
+	default 0xd if BOARD_GOOGLE_MODEL_PIC
+	default 0xd if BOARD_GOOGLE_MODEL_ANETO
+	default 0xb
+
+config MAINBOARD_GPIO_PIN_FOR_TOUCHPAD_POWER
+	int
+	default 36 if BOARD_GOOGLE_MODEL_QUARTZ
+	default 0
+	help
+	  This option specifies the GPIO pin number on the mainboard that is
+	  used for enabling power to the touchpad. Set it to 0 if unused.
+
+config MAINBOARD_GPIO_PIN_FOR_GSC_AP_INTERRUPT
+	depends on TPM_GOOGLE_TI50
+	int
+	default 91 if BOARD_GOOGLE_MODEL_QUENBI
+	default 91 if BOARD_GOOGLE_MODEL_QUARTZ
+	default 91 if BOARD_GOOGLE_MODEL_MICA
+	default 91 if BOARD_GOOGLE_MODEL_ANNITE
+	default 91 if BOARD_GOOGLE_MODEL_MERU
+	default 91 if BOARD_GOOGLE_MODEL_PIC
+	default 91 if BOARD_GOOGLE_MODEL_ANETO
+	default 34
+	help
+	  This option specifies the GPIO pin number on the mainboard that is
+	  used for the interrupt line from the Google Security Chip (GSC) to the
+	  Application Processor (AP).
+
+config MAINBOARD_GPIO_PIN_FOR_TOUCHSCREEN_POWER
+	int
+	default 88 if BOARD_GOOGLE_MODEL_MICA
+	default 88 if BOARD_GOOGLE_MODEL_ANNITE
+	default 88 if BOARD_GOOGLE_MODEL_PIC
+	default 88 if BOARD_GOOGLE_MODEL_ANETO
+	default 0
+	help
+	  The GPIO pin number used to enable/disable power to the
+	  touchscreen controller. This varies by board revision.
+	  Set to 0x0 if power is hardwired.
+
+config MAINBOARD_RAMDUMP_LED_NOTIFICATION
+	bool
+	default n
+	depends on QC_RAMDUMP_ENABLE
+	help
+	  Triggers a specific hardware LED pattern or color via the Embedded
+	  Controller (EC) when a ramdump is initiated. This provides
+	  a visual notification to the user that the system is capturing
+	  memory diagnostics (aka Ramdump) and should not be powered off.
+
+config MAINBOARD_LIGHTBAR_CMD_SEQ_RAMDUMP
+	int
+	default 55
+	depends on MAINBOARD_RAMDUMP_LED_NOTIFICATION
+	help
+	  The lightbar command sequence for triggering ramdump lightbar pattern.
+
+config FMDFILE
+	default "src/mainboard/\$(CONFIG_MAINBOARD_DIR)/chromeos-nogsc.fmd" if BOARD_GOOGLE_MODEL_BLUEY
+	default "src/mainboard/\$(CONFIG_MAINBOARD_DIR)/chromeos.fmd"
+
+config RW_REGION_ONLY
+	default "%/apdp %/apdp_meta %/ramdump %/ramdump_meta" if QC_SKIP_SOC_DEBUG_FEATURES_IN_RECOVERY
+
+config PLATFORM_POST_RENDER_DELAY_SEC
+	int
+	default 8
+
+config BATTERY_TRICKLE_VOLTAGE_MV
+	int
+	default 4200 if BOARD_GOOGLE_MODEL_QUENBI
+	default 6400 if BOARD_GOOGLE_MODEL_QUARTZ
+	default 9600 if BOARD_GOOGLE_MODEL_MICA
+	default 6300
+	help
+	  Battery voltage threshold in millivolts (mV) below which firmware
+	  must wait for slow/trickle recovery before booting.
+	  - Standard SMB2360 trickle limit (2.1V/cell):
+	    * 2S battery designs (e.g., Quenbi): 4200 mV
+	    * 3S battery designs (e.g., Bluey): 6300 mV
+	  - SMB2360 FULLON / fast-charge entry limit (3.2V/cell):
+	    * 2S battery designs (e.g., Quartz): 6400 mV
+	    * 3S battery designs (e.g., Mica): 9600 mV
+
+endif # BOARD_GOOGLE_BLUEY_COMMON

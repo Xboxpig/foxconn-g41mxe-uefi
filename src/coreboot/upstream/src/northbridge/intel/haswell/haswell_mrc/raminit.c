@@ -1,0 +1,291 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#include <arch/hpet.h>
+#include <console/console.h>
+#include <console/usb.h>
+#include <string.h>
+#include <cbfs.h>
+#include <cf9_reset.h>
+#include <memory_info.h>
+#include <mrc_cache.h>
+#include <device/device.h>
+#include <device/dram/ddr3.h>
+#include <northbridge/intel/haswell/chip.h>
+#include <northbridge/intel/haswell/haswell.h>
+#include <northbridge/intel/haswell/raminit.h>
+#include <smbios.h>
+#include <spd.h>
+#include <static.h>
+#include <security/vboot/vboot_common.h>
+#include <commonlib/region.h>
+#include <southbridge/intel/lynxpoint/me.h>
+#include <southbridge/intel/lynxpoint/pch.h>
+#include <timestamp.h>
+#include <types.h>
+
+#include "pei_data.h"
+
+#define MRC_CACHE_VERSION 1
+
+static void save_mrc_data(struct pei_data *pei_data)
+{
+	/* Save the MRC S3 restore data to cbmem */
+	mrc_cache_stash_data(MRC_TRAINING_DATA, MRC_CACHE_VERSION, pei_data->mrc_output,
+			     pei_data->mrc_output_len);
+}
+
+static void prepare_mrc_cache(struct pei_data *pei_data)
+{
+	size_t mrc_size;
+
+	/* Preset just in case there is an error */
+	pei_data->mrc_input = NULL;
+	pei_data->mrc_input_len = 0;
+
+	pei_data->mrc_input =
+		mrc_cache_current_mmap_leak(MRC_TRAINING_DATA,
+					    MRC_CACHE_VERSION,
+					    &mrc_size);
+	if (!pei_data->mrc_input)
+		/* Error message printed in find_current_mrc_cache */
+		return;
+
+	pei_data->mrc_input_len = mrc_size;
+
+	printk(BIOS_DEBUG, "%s: at %p, size %zx\n", __func__,
+	       pei_data->mrc_input, mrc_size);
+}
+
+/**
+ * Find PEI executable in coreboot filesystem and execute it.
+ *
+ * @param pei_data: configuration data for UEFI PEI reference code
+ */
+static void sdram_initialize(struct pei_data *pei_data)
+{
+	int (*entry)(struct pei_data *pei_data) __attribute__((regparm(1)));
+
+	printk(BIOS_DEBUG, "Starting UEFI PEI System Agent\n");
+
+	/*
+	 * Always pass in mrc_cache data.  The driver will determine
+	 * whether to use the data or not.
+	 */
+	prepare_mrc_cache(pei_data);
+
+	/* If MRC data is not found, we cannot continue S3 resume */
+	if (pei_data->boot_mode == 2 && !pei_data->mrc_input) {
+		post_code(POSTCODE_RESUME_FAILURE);
+		printk(BIOS_DEBUG, "Giving up in %s: No MRC data\n", __func__);
+		system_reset();
+	}
+
+	/* Pass console handler in pei_data */
+	pei_data->tx_byte = do_putchar;
+
+	/*
+	 * Locate and call UEFI System Agent binary. The binary needs to be at a fixed offset
+	 * in the flash and can therefore only reside in the COREBOOT fmap region. We don't care
+	 * about leaking the mapping.
+	 */
+	entry = cbfs_ro_map("mrc.bin", NULL);
+	if (entry) {
+		int rv = entry(pei_data);
+
+		/* The mrc.bin reconfigures USB, so usbdebug needs to be reinitialized */
+		if (CONFIG(USBDEBUG_IN_PRE_RAM))
+			usbdebug_hw_init(true);
+
+		if (rv) {
+			switch (rv) {
+			case -1:
+				printk(BIOS_ERR, "PEI version mismatch.\n");
+				break;
+			case -2:
+				printk(BIOS_ERR, "Invalid memory frequency.\n");
+				break;
+			default:
+				printk(BIOS_ERR, "MRC returned %x.\n", rv);
+			}
+			die_with_post_code(POSTCODE_INVALID_VENDOR_BINARY,
+					   "Nonzero MRC return value.\n");
+		}
+	} else {
+		die("UEFI PEI System Agent not found.\n");
+	}
+
+	/* Print the MRC version after executing the UEFI PEI stage */
+	u32 version = mchbar_read32(MRC_REVISION);
+	printk(BIOS_DEBUG, "MRC Version %u.%u.%u Build %u\n",
+		(version >> 24) & 0xff, (version >> 16) & 0xff,
+		(version >>  8) & 0xff, (version >>  0) & 0xff);
+
+	/*
+	 * MRC may return zero even when raminit did not complete successfully.
+	 * Ensure the mc_init_done_ack bit is set before continuing. Otherwise,
+	 * attempting to access memory will lock up the system.
+	 */
+	if (!(mchbar_read32(MC_INIT_STATE_G) & (1 << 5))) {
+		printk(BIOS_EMERG, "Memory controller did not acknowledge raminit.\n");
+		die("MRC raminit failed\n");
+	}
+
+	report_memory_config();
+}
+
+/* Copy SPD data for on-board memory */
+static void copy_spd(struct pei_data *pei_data, struct spd_info *spdi)
+{
+	if (!CONFIG(HAVE_SPD_IN_CBFS))
+		return;
+
+	const uint8_t *cbfs_spd = get_spd_from_cbfs(spdi);
+	if (!cbfs_spd)
+		die("Could not get SPD data from CBFS");
+
+	/* MRC only uses index 0, but coreboot uses the other indices */
+	memcpy(pei_data->spd_data[0], cbfs_spd, SPD_SIZE_MAX_DDR3);
+	for (size_t i = 1; i < ARRAY_SIZE(spdi->addresses); i++) {
+		if (spdi->addresses[i] == SPD_MEMORY_DOWN)
+			memcpy(pei_data->spd_data[i], pei_data->spd_data[0], SPD_SIZE_MAX_DDR3);
+	}
+}
+
+/*
+ * 0 = leave channel enabled
+ * 1 = disable dimm 0 on channel
+ * 2 = disable dimm 1 on channel
+ * 3 = disable dimm 0+1 on channel
+ */
+static int make_channel_disabled_mask(const struct pei_data *pd, int ch)
+{
+	return (!pd->spd_addresses[ch + ch] << 0) | (!pd->spd_addresses[ch + ch + 1] << 1);
+}
+
+static enum pei_usb2_port_location map_to_pei_usb2_location(const enum usb2_port_location loc)
+{
+	static const enum pei_usb2_port_location map[] = {
+		[USB_PORT_SKIP]		= PEI_USB_PORT_SKIP,
+		[USB_PORT_BACK_PANEL]	= PEI_USB_PORT_BACK_PANEL,
+		[USB_PORT_FRONT_PANEL]	= PEI_USB_PORT_FRONT_PANEL,
+		[USB_PORT_DOCK]		= PEI_USB_PORT_DOCK,
+		[USB_PORT_MINI_PCIE]	= PEI_USB_PORT_MINI_PCIE,
+		[USB_PORT_FLEX]		= PEI_USB_PORT_FLEX,
+		[USB_PORT_INTERNAL]	= PEI_USB_PORT_INTERNAL,
+	};
+	return loc >= ARRAY_SIZE(map) ? PEI_USB_PORT_SKIP : map[loc];
+}
+
+static uint8_t map_to_pei_oc_pin(const uint8_t oc_pin)
+{
+	return oc_pin >= USB_OC_PIN_SKIP ? PEI_USB_OC_PIN_SKIP : oc_pin;
+}
+
+void perform_raminit(const bool s3resume)
+{
+	const struct device *gbe = pcidev_on_root(0x19, 0);
+
+	const struct northbridge_intel_haswell_config *cfg = config_of_soc();
+
+	struct pei_data pei_data = {
+		.pei_version		= PEI_VERSION,
+		.mchbar			= CONFIG_FIXED_MCHBAR_MMIO_BASE,
+		.dmibar			= CONFIG_FIXED_DMIBAR_MMIO_BASE,
+		.epbar			= CONFIG_FIXED_EPBAR_MMIO_BASE,
+		.pciexbar		= CONFIG_ECAM_MMCONF_BASE_ADDRESS,
+		.smbusbar		= CONFIG_FIXED_SMBUS_IO_BASE,
+		.hpet_address		= HPET_BASE_ADDRESS,
+		.rcba			= CONFIG_FIXED_RCBA_MMIO_BASE,
+		.pmbase			= DEFAULT_PMBASE,
+		.gpiobase		= DEFAULT_GPIOBASE,
+		.temp_mmio_base		= 0xfed08000,
+		.system_type		= get_pch_platform_type(),
+		.tseg_size		= CONFIG_SMM_TSEG_SIZE,
+		.ec_present		= cfg->ec_present,
+		.gbe_enable		= gbe && gbe->enabled,
+		.ddr_refresh_2x		= CONFIG(ENABLE_DDR_2X_REFRESH),
+		.dq_pins_interleaved	= cfg->dq_pins_interleaved,
+		.max_ddr3_freq		= 1600,
+		.usb_xhci_on_resume	= cfg->usb_xhci_on_resume,
+	};
+
+	for (size_t i = 0; i < ARRAY_SIZE(mainboard_usb2_ports); i++) {
+		/* If a port is not enabled, skip it */
+		if (!mainboard_usb2_ports[i].enable) {
+			pei_data.usb2_ports[i].over_current_pin	= PEI_USB_OC_PIN_SKIP;
+			pei_data.usb2_ports[i].location		= PEI_USB_PORT_SKIP;
+			continue;
+		}
+		const enum usb2_port_location loc = mainboard_usb2_ports[i].location;
+		const uint8_t oc_pin = mainboard_usb2_ports[i].oc_pin;
+		pei_data.usb2_ports[i].length		= mainboard_usb2_ports[i].length;
+		pei_data.usb2_ports[i].enable		= mainboard_usb2_ports[i].enable;
+		pei_data.usb2_ports[i].over_current_pin	= map_to_pei_oc_pin(oc_pin);
+		pei_data.usb2_ports[i].location		= map_to_pei_usb2_location(loc);
+	}
+
+	for (size_t i = 0; i < ARRAY_SIZE(mainboard_usb3_ports); i++) {
+		const uint8_t oc_pin = mainboard_usb3_ports[i].oc_pin;
+		pei_data.usb3_ports[i].enable		= mainboard_usb3_ports[i].enable;
+		pei_data.usb3_ports[i].over_current_pin	= map_to_pei_oc_pin(oc_pin);
+	}
+
+	/* MRC has hardcoded assumptions of 2 meaning S3 wake. Normalize it here. */
+	pei_data.boot_mode = s3resume ? 2 : 0;
+
+	struct spd_info spdi = {0};
+	get_spd_info(&spdi, cfg);
+
+	/* MRC expects left-aligned SMBus addresses, and 0xff for memory-down */
+	for (size_t i = 0; i < ARRAY_SIZE(spdi.addresses); i++) {
+		const uint8_t addr = spdi.addresses[i];
+		pei_data.spd_addresses[i] = addr == SPD_MEMORY_DOWN ? 0xff : addr << 1;
+	}
+
+	/* Calculate unimplemented DIMM slots for each channel */
+	pei_data.dimm_channel0_disabled = make_channel_disabled_mask(&pei_data, 0);
+	pei_data.dimm_channel1_disabled = make_channel_disabled_mask(&pei_data, 1);
+
+	timestamp_add_now(TS_INITRAM_START);
+
+	copy_spd(&pei_data, &spdi);
+
+	sdram_initialize(&pei_data);
+
+	timestamp_add_now(TS_INITRAM_END);
+
+	post_code(0x3b);
+
+	intel_early_me_status();
+
+	bool cbmem_was_initted = !cbmem_recovery(s3resume);
+	if (s3resume && !cbmem_was_initted) {
+		/* Failed S3 resume, reset to come up cleanly */
+		printk(BIOS_CRIT, "Failed to recover CBMEM in S3 resume.\n");
+		system_reset();
+	}
+
+	/* Save data returned from MRC on non-S3 resumes. */
+	if (!s3resume)
+		save_mrc_data(&pei_data);
+
+	/*
+	 * TODO: `setup_sdram_info()` uses SPD data to fill in various fields. However,
+	 * even though Haswell MRC reads SPD data over SMBus, it does not pass the data
+	 * back to coreboot. So, we currently only have SPD data for memory-down slots.
+	 *
+	 * We have to read the SPD data over SMBus again for coreboot to use it. But we
+	 * can be smart and only read the bytes that `setup_sdram_meminfo()` needs.
+	 */
+	const uint8_t *spd_data[NUM_CHANNELS][NUM_SLOTS] = {
+		[0] = {
+			[0] = pei_data.spd_data[0],
+			[1] = pei_data.spd_data[1],
+		},
+		[1] = {
+			[0] = pei_data.spd_data[2],
+			[1] = pei_data.spd_data[3],
+		},
+	};
+	setup_sdram_meminfo(spd_data);
+}

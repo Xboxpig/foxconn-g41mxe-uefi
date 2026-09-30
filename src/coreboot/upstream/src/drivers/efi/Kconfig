@@ -1,0 +1,162 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config DRIVERS_EFI_VARIABLE_STORE
+	bool "Include EFI variable store driver"
+	select UDK_2017_BINDING if !PLATFORM_USES_FSP2_0 && !PLATFORM_USES_FSP1_1
+	help
+	  Adds a driver that is able to read and write an EFI formatted
+	  VariableStore as used by tianocore.
+
+config DRIVERS_EFI_FW_INFO
+	bool "Expose firmware version in a EFI-friendly form"
+	select UDK_2017_BINDING if !PLATFORM_USES_FSP2_0 && !PLATFORM_USES_FSP1_1
+	help
+	  Adds firmware version information to coreboot table in a form similar to
+	  EFI System Resource Table (ESRT) that can be used for firmware updates.
+
+config DRIVERS_EFI_MAIN_FW_GUID
+	string "GUID of the firmware"
+	default "00112233-4455-6677-8899-aabbccddeeff"
+	depends on DRIVERS_EFI_FW_INFO
+	help
+	  GUID used to identify firmware kind for the purposes of updates.
+
+config DRIVERS_EFI_MAIN_FW_VERSION
+	hex "Version of the firmware"
+	range 0x00000000 0xFFFFFFFF
+	default 0x00000000
+	depends on DRIVERS_EFI_FW_INFO
+	help
+	  32-bit unsigned integer representing current firmware's version.
+
+	  If set to 0, coreboot will try to derive a version from LOCALVERSION by
+	  parsing a leading "<major>.<minor>" and encoding it as
+	  (major << 16) | minor.
+
+	  Non-digits before and after "<major>.<minor>" are ignored.
+	  Examples:
+	  - "26.01" -> 0x001A0001
+	  - "v26.01-rc1" -> 0x001A0001
+
+config DRIVERS_EFI_MAIN_FW_LSV
+	hex "Lowest supported firmware version"
+	range 0x00000000 0xFFFFFFFF
+	default 0x00000000
+	depends on DRIVERS_EFI_FW_INFO
+	help
+	  32-bit unsigned integer representing lowest firmware version number
+	  that is allowed to replace the current one.  Can be used to forbid
+	  bugged versions.
+
+	  If set to 0, coreboot uses DRIVERS_EFI_MAIN_FW_VERSION.
+
+config DRIVERS_EFI_UPDATE_CAPSULES
+	bool "Include EFI update capsules driver"
+	depends on DRIVERS_EFI_VARIABLE_STORE && SMMSTORE && DRIVERS_EFI_FW_INFO
+	help
+	  Adds a driver that is able to parse CapsuleUpdateData* EFI variables
+	  to discover firmware updates and expose them for tianocore thorough
+	  CBMEM for execution.  tianocore is responsible for erasing the variables.
+
+config DRIVERS_EFI_CAPSULE_ON_DISK_SUPPORT
+	bool "Support EFI capsules on disk"
+	depends on DRIVERS_EFI_UPDATE_CAPSULES
+	default y if SOC_AMD_COMMON
+	help
+	  Permit update capsules to be submitted via the EFI system
+	  partition instead of relying on capsule pointers surviving reset.
+	  Scanning DRAM for capsules is not reliable on some platforms, so this option is
+	  required for those platforms.
+
+config DRIVERS_EFI_CAPSULE_ACCEPT_EMBEDDED_DRIVERS
+	bool "Allow embedded drivers in update capsules"
+	depends on PAYLOAD_EDK2 && DRIVERS_EFI_UPDATE_CAPSULES
+	help
+	  Allow the EDK2 payload's capsule processing to load embedded drivers
+	  from capsules (PcdCapsuleEmbeddedDriverSupport).
+
+	  This is required for capsules that contain embedded drivers.
+
+	  Note: if Secure Boot is enabled, the embedded driver must be signed by a
+	  key trusted by the running firmware (or capsule processing may fail).
+
+config DRIVERS_EFI_GENERATE_CAPSULE
+	bool "Generate an update capsule during the build"
+	depends on PAYLOAD_EDK2 && DRIVERS_EFI_UPDATE_CAPSULES
+	help
+	  Generates a UEFI capsule from the final ROM image using EDK2 BaseTools.
+	  This is intended for fwupd update workflows that use the ESRT/FMP
+	  mechanism.
+
+config DRIVERS_EFI_CAPSULE_EMBED_FMP_DXE
+	bool "Embed FmpDxe driver into generated capsules"
+	depends on DRIVERS_EFI_GENERATE_CAPSULE
+	depends on DRIVERS_EFI_CAPSULE_ACCEPT_EMBEDDED_DRIVERS
+	help
+	  When generating build/coreboot.cap, embed the built FmpDxe.efi as an
+	  embedded driver in the capsule, rather than in the ROM image itself.
+
+	  Note: if Secure Boot is enabled, FmpDxe.efi must be signed by a key
+	  trusted by the running firmware (or capsule processing may fail).
+
+
+config DRIVERS_EFI_CAPSULE_INITIATE_RESET
+	bool "Request reset after capsule is applied"
+	default n
+	depends on DRIVERS_EFI_GENERATE_CAPSULE
+	help
+	  Add the InitiateReset capsule flag when generating build/coreboot.cap.
+
+	  Note: Linux rejects capsules with InitiateReset when using
+	  /dev/efi_capsule_loader.
+
+
+config DRIVERS_EFI_CAPSULE_REGIONS
+	string "FMAP regions to include in the capsule manifest"
+	default "COREBOOT"
+	depends on DRIVERS_EFI_GENERATE_CAPSULE
+	help
+	  Whitespace-separated list of FMAP regions that the update capsule is
+	  allowed to modify. The list is embedded as a manifest inside the ROM
+	  image prior to building the capsule.
+
+menu "Capsule signing certificates"
+	depends on DRIVERS_EFI_UPDATE_CAPSULES
+
+config DRIVERS_EFI_CAPSULE_SIGNER_PRIVATE_CERT
+	string "PEM file used to sign generated capsules"
+	default "BaseTools/Source/Python/Pkcs7Sign/TestCert.pem"
+	depends on DRIVERS_EFI_GENERATE_CAPSULE
+	help
+	  Path to a PEM file containing the private key and leaf certificate used
+	  when signing the capsule with EDK2 GenerateCapsule.
+
+	  If the path is relative, it is interpreted relative to the configured
+	  EDK2 repository (payloads/external/edk2 workspace).
+
+	  See Documentation/drivers/efi_capsule_generation.md and
+	  BaseTools/Source/Python/Pkcs7Sign/Readme.md in the EDK2 tree.
+
+config DRIVERS_EFI_CAPSULE_OTHER_PUBLIC_CERT
+	string "Intermediate certificate for capsule signing (PEM)"
+	default "BaseTools/Source/Python/Pkcs7Sign/TestSub.pub.pem"
+	depends on DRIVERS_EFI_GENERATE_CAPSULE
+	help
+	  Path to the intermediate certificate (PEM) used when generating a PKCS#7
+	  signature for the capsule.
+
+	  If the path is relative, it is interpreted relative to the configured
+	  EDK2 repository (payloads/external/edk2 workspace).
+
+config DRIVERS_EFI_CAPSULE_TRUSTED_PUBLIC_CERT
+	string "Trusted root certificate for capsule signing (PEM)"
+	default "BaseTools/Source/Python/Pkcs7Sign/TestRoot.pub.pem"
+	depends on DRIVERS_EFI_UPDATE_CAPSULES
+	help
+	  Path to the trusted root certificate (PEM) used when generating a PKCS#7
+	  signature for the capsule.
+
+	  If the path is relative, it is interpreted relative to the configured
+	  EDK2 repository (payloads/external/edk2 workspace).
+
+endmenu

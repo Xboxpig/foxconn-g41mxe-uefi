@@ -1,0 +1,225 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#include <console/console.h>
+#include <bootmem.h>
+#include <boot/tables.h>
+#include <boot/coreboot_tables.h>
+#include <arch/pirq_routing.h>
+#include <arch/smp/mpspec.h>
+#include <acpi/acpi.h>
+#include <commonlib/helpers.h>
+#include <string.h>
+#include <cbmem.h>
+#include <smbios.h>
+
+static unsigned long write_pirq_table(unsigned long rom_table_end)
+{
+	unsigned long high_table_pointer;
+
+#define MAX_PIRQ_TABLE_SIZE (4 * 1024)
+	post_code(POSTCODE_X86_WRITE_PIRQ_TABLE);
+
+	/* This table must be between 0x0f0000 and 0x100000 */
+	rom_table_end = write_pirq_routing_table(rom_table_end);
+	rom_table_end = ALIGN_UP(rom_table_end, 1024);
+
+	/* And add a high table version for those payloads that
+	 * want to live in the F segment
+	 */
+	high_table_pointer = (unsigned long)cbmem_add(CBMEM_ID_PIRQ,
+		MAX_PIRQ_TABLE_SIZE);
+	if (high_table_pointer) {
+		unsigned long new_high_table_pointer;
+		new_high_table_pointer =
+			write_pirq_routing_table(high_table_pointer);
+		// FIXME make pirq table code intelligent enough to know how
+		// much space it's going to need.
+		if (new_high_table_pointer > (high_table_pointer
+			+ MAX_PIRQ_TABLE_SIZE))
+			printk(BIOS_ERR, "Increase PIRQ size.\n");
+		printk(BIOS_DEBUG, "PIRQ table: %ld bytes.\n",
+				new_high_table_pointer - high_table_pointer);
+	}
+
+	return rom_table_end;
+}
+
+static unsigned long write_mptable(unsigned long rom_table_end)
+{
+	unsigned long high_table_pointer;
+
+#define MAX_MP_TABLE_SIZE (4 * 1024)
+	post_code(POSTCODE_X86_WRITE_MPTABLE);
+
+	/* The smp table must be in 0-1K, 639K-640K, or 960K-1M */
+	rom_table_end = write_smp_table(rom_table_end);
+	rom_table_end = ALIGN_UP(rom_table_end, 1024);
+
+	high_table_pointer = (unsigned long)cbmem_add(CBMEM_ID_MPTABLE,
+		MAX_MP_TABLE_SIZE);
+	if (high_table_pointer) {
+		unsigned long new_high_table_pointer;
+		new_high_table_pointer = write_smp_table(high_table_pointer);
+		// FIXME make mp table code intelligent enough to know how
+		// much space it's going to need.
+		if (new_high_table_pointer > (high_table_pointer
+			+ MAX_MP_TABLE_SIZE))
+			printk(BIOS_ERR, "Increase MP table size.\n");
+
+		printk(BIOS_DEBUG, "MP table: %ld bytes.\n",
+				new_high_table_pointer - high_table_pointer);
+	}
+
+	return rom_table_end;
+}
+
+static unsigned long write_acpi_table(unsigned long rom_table_end)
+{
+
+	post_code(POSTCODE_X86_WRITE_ACPITABLE);
+
+	acpi_allocate_write_tables();
+
+	acpi_rsdp_t *rsdp = (acpi_rsdp_t *)get_coreboot_rsdp();
+	if (rsdp && memcmp(rsdp->signature, RSDP_SIG, 8) == 0) {
+		rom_table_end = ALIGN_UP(rom_table_end, 16);
+		acpi_rsdp_t *low_rsdp = (acpi_rsdp_t *)rom_table_end;
+
+		/* Technically rsdp length varies but coreboot always
+		   writes longest size available.  */
+		memcpy(low_rsdp, rsdp, sizeof(acpi_rsdp_t));
+		rom_table_end = ALIGN_UP(rom_table_end + sizeof(acpi_rsdp_t), 16);
+	} else {
+		printk(BIOS_ERR, "ACPI: Didn't find RSDP in CBMEM.\n");
+	}
+
+	return rom_table_end;
+}
+
+static unsigned long write_smbios_table(unsigned long rom_table_end)
+{
+	unsigned long high_table_pointer;
+
+#define MAX_SMBIOS_SIZE (32 * KiB)
+
+	high_table_pointer = (unsigned long)cbmem_add(CBMEM_ID_SMBIOS,
+		MAX_SMBIOS_SIZE);
+	if (high_table_pointer) {
+		unsigned long new_high_table_pointer;
+
+		/*
+		 * Clear the entire region to ensure the unused space doesn't
+		 * contain garbage from a previous boot, like stale table
+		 * signatures that could be found by the OS.
+		 */
+		memset((void *)high_table_pointer, 0, MAX_SMBIOS_SIZE);
+
+		new_high_table_pointer =
+			smbios_write_tables(high_table_pointer);
+		rom_table_end = ALIGN_UP(rom_table_end, 16);
+		memcpy((void *)rom_table_end, (void *)high_table_pointer,
+			sizeof(struct smbios_entry));
+		rom_table_end += sizeof(struct smbios_entry);
+
+		if (new_high_table_pointer > (high_table_pointer
+			+ MAX_SMBIOS_SIZE))
+			printk(BIOS_ERR, "Increase SMBIOS size\n");
+		printk(BIOS_DEBUG, "SMBIOS tables: %ld bytes.\n",
+				new_high_table_pointer - high_table_pointer);
+	} else {
+		unsigned long new_rom_table_end;
+
+		new_rom_table_end = smbios_write_tables(rom_table_end);
+		printk(BIOS_DEBUG, "SMBIOS size %ld bytes\n", new_rom_table_end
+			- rom_table_end);
+		rom_table_end = ALIGN_UP(new_rom_table_end, 16);
+	}
+
+	return rom_table_end;
+}
+
+/* Start forwarding table at 0x500, so we don't run into conflicts with the BDA
+ * in case our data structures grow beyond 0x400. Only GDT
+ * and the coreboot table use low_tables.
+ */
+#define FORWARDING_TABLE_ADDR ((uintptr_t)0x500)
+static uintptr_t forwarding_table = FORWARDING_TABLE_ADDR;
+
+void arch_write_tables(uintptr_t coreboot_table)
+{
+	size_t sz;
+	unsigned long rom_table_end;
+
+	if (CONFIG(SHADOW_ROM_TABLE_TO_EBDA))
+		rom_table_end = CONFIG_DEFAULT_EBDA_SEGMENT << 4;
+	else
+		rom_table_end = 0xf0000;
+
+	/* This table must be between 0x0f0000 and 0x100000 */
+	if (CONFIG(GENERATE_PIRQ_TABLE))
+		rom_table_end = write_pirq_table(rom_table_end);
+
+	/* The smp table must be in 0-1K, 639K-640K, or 960K-1M */
+	if (CONFIG(GENERATE_MP_TABLE))
+		rom_table_end = write_mptable(rom_table_end);
+
+	if (CONFIG(HAVE_ACPI_TABLES))
+		rom_table_end = write_acpi_table(rom_table_end);
+
+	if (CONFIG(GENERATE_SMBIOS_TABLES))
+		rom_table_end = write_smbios_table(rom_table_end);
+
+	sz = write_coreboot_forwarding_table(forwarding_table, coreboot_table);
+
+	forwarding_table += sz;
+	/* Align up to page boundary for historical consistency. */
+	forwarding_table = ALIGN_UP(forwarding_table, 4*KiB);
+
+	/* Tell static analysis we know value is left unused. */
+	(void)rom_table_end;
+}
+
+void bootmem_arch_add_ranges(void)
+{
+	/* Memory from 0 through the forwarding_table is reserved. */
+	const uintptr_t base = 0;
+
+	bootmem_add_range(base, forwarding_table - base, BM_MEM_TABLE);
+
+	/* Reserve Extend BIOS Data Area (EBDA) region explicitly */
+	bootmem_add_range((uintptr_t)CONFIG_DEFAULT_EBDA_SEGMENT << 4,
+			CONFIG_DEFAULT_EBDA_SIZE, BM_MEM_TABLE);
+}
+
+bool check_acpi_tables_write_limit(unsigned long current, size_t size)
+{
+	static unsigned long acpi_buffer_start = 0;
+	static unsigned long acpi_buffer_limit = 0;
+	static bool limit_initialized = false;
+
+	if (!limit_initialized) {
+		const struct cbmem_entry *ce = cbmem_entry_find(CBMEM_ID_ACPI);
+		if (ce) {
+			acpi_buffer_start = (unsigned long)cbmem_entry_start(ce);
+			acpi_buffer_limit = acpi_buffer_start + cbmem_entry_size(ce);
+			limit_initialized = true;
+		} else {
+			printk(BIOS_ERR, "ACPI buffer not yet allocated, write blocked\n");
+			return false;
+		}
+	}
+
+	if (current < acpi_buffer_start || current >= acpi_buffer_limit) {
+		printk(BIOS_ERR, "Detected write attempt @ %#lx outside the ACPI buffer"
+		       " (start %#lx, limit %#lx)\n",
+		       current, acpi_buffer_start, acpi_buffer_limit);
+		return false;
+	}
+
+	if (size > (acpi_buffer_limit - current)) {
+		printk(BIOS_ERR, "ACPI buffer overflow detected (limit %#lx,"
+		       " needed %#zx at %#lx)\n", acpi_buffer_limit, size, current);
+		return false;
+	}
+	return true;
+}

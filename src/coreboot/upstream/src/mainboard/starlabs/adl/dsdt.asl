@@ -1,0 +1,36 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#include <acpi/acpi.h>
+DefinitionBlock(
+	"dsdt.aml",
+	"DSDT",
+	ACPI_DSDT_REV_2,
+	OEM_ID,
+	ACPI_TABLE_CREATOR,
+	0x20220930
+)
+{
+	#include <acpi/dsdt_top.asl>
+	#include <soc/intel/common/block/acpi/acpi/platform.asl>
+	#include <soc/intel/common/block/acpi/acpi/globalnvs.asl>
+	#include <cpu/intel/common/acpi/cpu.asl>
+
+	Device (\_SB.PCI0)
+	{
+		#include <soc/intel/common/block/acpi/acpi/northbridge.asl>
+		#include <soc/intel/alderlake/acpi/southbridge.asl>
+		#include <soc/intel/alderlake/acpi/tcss.asl>
+
+		#include <soc/intel/common/block/acpi/acpi/gna.asl>
+#if CONFIG(SYSTEM_TYPE_LAPTOP) || CONFIG(SYSTEM_TYPE_DETACHABLE)
+		#include <drivers/intel/gma/acpi/default_brightness_levels.asl>
+
+		/* PS/2 Keyboard */
+		#include <drivers/pc80/pc/ps2_keyboard.asl>
+#endif
+	}
+
+	#include <southbridge/intel/common/acpi/sleepstates.asl>
+
+	#include "acpi/mainboard.asl"
+}

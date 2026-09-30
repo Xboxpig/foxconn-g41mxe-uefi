@@ -1,0 +1,27 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config EC_SYSTEM76_EC
+	bool
+	help
+	  System76 EC
+
+if EC_SYSTEM76_EC
+
+config EC_SYSTEM76_EC_BAT_THRESHOLDS
+	bool
+	default y
+
+config EC_SYSTEM76_EC_FAN2
+	bool
+	default n
+
+config EC_SYSTEM76_EC_DGPU
+	bool
+	default n
+	select EC_SYSTEM76_EC_FAN2
+
+config EC_SYSTEM76_EC_OLED
+	bool
+	default n
+
+endif # EC_SYSTEM76_EC

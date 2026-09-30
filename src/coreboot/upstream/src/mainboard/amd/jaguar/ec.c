@@ -1,0 +1,73 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#include "ec.h"
+
+#include <console/console.h>
+#include <ec/acpi/ec.h>
+#include <stdint.h>
+#include "board_config.h"
+
+/* Controls power and reset lines connected to EC */
+static void configure_ec_gpio(void)
+{
+	uint8_t tmp;
+	uint8_t olddata = ec_read(EC_PAGE_SELECT);
+
+	/* EC detected EVAL card and power is off? */
+	if ((ec_read(EC_EVAL_STS) & (EC_EVAL_STS_CARD_DETECTED | EC_EVAL_STS_PWR_GOOD)) ==
+	    EC_EVAL_STS_CARD_DETECTED) {
+		ec_write(EC_EVAL_CTRL,  ec_read(EC_EVAL_CTRL) | EC_EVAL_CTRL_CARD_ON);
+		printk(BIOS_DEBUG, "Detected EVAL card in EVAL slot, powering on...\n");
+	}
+
+	/* select page c2 */
+	ec_write(EC_PAGE_SELECT, EC_GPIO_PAGE);
+
+	/* SLOT-0 Force power */
+	if (mb_cfg_pcie_slot0_force_pwr())
+		tmp = EC_FORCE_PWR_SLOT0;
+	else
+		tmp = 0;
+
+	ec_write(EC_FORCE_PWR, tmp);
+	printk(BIOS_SPEW, "EC: 0x%02x = %02x\n", EC_FORCE_PWR, tmp);
+
+	/* Power on WLAN */
+	tmp = 0;
+	if (mb_cfg_pcie_bifurcation() == EC_PCIE_MUX_M2_WLAN_2X2X)
+		tmp |= EC_WLAN_POWER_PWR_EN | EC_WLAN_POWER_PERST_N | EC_WLAN_POWER_SDIO_RST_N;
+	ec_write(EC_WLAN_POWER, tmp);
+	printk(BIOS_SPEW, "EC: 0x%02x = %02x\n", EC_WLAN_POWER, tmp);
+
+	/* Configure PCIe mux */
+	ec_write(EC_PCIE_MUX, mb_cfg_pcie_bifurcation());
+	printk(BIOS_SPEW, "EC: 0x%02x = %02x\n", EC_PCIE_MUX, tmp);
+
+	tmp = 0;
+	if (mb_cfg_xgbe_leds())
+		tmp |= EC_XGBE_LED_ENABLE;
+
+	/* Only SFP+ needs MDIO. xGBE in backplane mode doesn't use MDIO. */
+	if (CONFIG(XGBE_SFP_PLUS_CONNECTION))
+		tmp |= EC_XGBE_MDIO0_1_XGBE | EC_XGBE_SFPP_MUX_ENABLE;
+
+	ec_write(EC_XGBE_CTRL, tmp);
+	printk(BIOS_SPEW, "EC: 0x%02x = %02x\n", EC_XGBE_CTRL, tmp);
+
+	/* Enable M.2 SSD0 power */
+	if (mb_cfg_pcie_bifurcation() != EC_PCIE_MUX_SLOT1X4)
+		tmp = EC_M2_POWER_PWR_EN | EC_M2_POWER_PERST_N;
+	else
+		tmp = 0;
+	ec_write(EC_M2_POWER, tmp);
+	printk(BIOS_SPEW, "EC: 0x%02x = %02x\n", EC_M2_POWER, tmp);
+
+	/* restore page */
+	ec_write(EC_PAGE_SELECT, olddata);
+}
+
+void jaguar_ec_init(void)
+{
+	ec_set_ports(JAGUAR_EC_CMD, JAGUAR_EC_DATA);
+	configure_ec_gpio();
+}

@@ -1,0 +1,430 @@
+chip soc/intel/skylake
+
+	register "panel_cfg" = "{
+		.up_delay_ms		=  100,
+		.down_delay_ms		=  500,
+		.cycle_delay_ms		=  500,
+		.backlight_on_delay_ms	=    1,
+		.backlight_off_delay_ms	=  200,
+		.backlight_pwm_hz	= 1000,
+	}"
+
+	# Deep Sx states
+	register "deep_s3_enable_ac" = "false"
+	register "deep_s3_enable_dc" = "false"
+	register "deep_s5_enable_ac" = "true"
+	register "deep_s5_enable_dc" = "true"
+	register "deep_sx_config" = "DSX_EN_LAN_WAKE_PIN | DSX_EN_WAKE_PIN | DSX_DIS_AC_PRESENT_PD"
+
+	# GPE configuration
+	# Note that GPE events called out in ASL code rely on this
+	# route. i.e. If this route changes then the affected GPE
+	# offset bits also need to be changed.
+	register "gpe0_dw0" = "GPP_B"
+	register "gpe0_dw1" = "GPP_D"
+	register "gpe0_dw2" = "GPP_E"
+
+	# Enable DPTF
+	register "dptf_enable" = "true"
+
+	# Enable S0ix
+	register "s0ix_enable" = true
+
+	# FSP Configuration
+	register "DspEnable" = "true"
+	register "IoBufferOwnership" = "3"
+	register "ScsEmmcHs400Enabled" = "1"
+	register "SkipExtGfxScan" = "1"
+	register "SaGv" = "SaGv_Enabled"
+	register "PmConfigSlpS3MinAssert" = "2"        # 50ms
+	register "PmConfigSlpS4MinAssert" = "1"        # 1s
+	register "PmConfigSlpSusMinAssert" = "1"       # 500ms
+	register "PmConfigSlpAMinAssert" = "3"         # 2s
+
+	# VR Settings Configuration for 4 Domains
+	#+----------------+-------+-------+-------+-------+
+	#| Domain/Setting |  SA   |  IA   | GTUS  |  GTS  |
+	#+----------------+-------+-------+-------+-------+
+	#| Psi1Threshold  | 20A   | 20A   | 20A   | 20A   |
+	#| Psi2Threshold  | 2A    | 2A    | 2A    | 2A    |
+	#| Psi3Threshold  | 1A    | 1A    | 1A    | 1A    |
+	#| Psi3Enable     | 1     | 1     | 1     | 1     |
+	#| Psi4Enable     | 1     | 1     | 1     | 1     |
+	#| ImonSlope      | 0     | 0     | 0     | 0     |
+	#| ImonOffset     | 0     | 0     | 0     | 0     |
+	#| IccMax         | 5A    | 24A   | 24A   | 24A   |
+	#| VrVoltageLimit | 1.52V | 1.52V | 1.52V | 1.52V |
+	#| AcLoadline     | 15    | 5.7   | 5.5   | 5.5   |
+	#| DcLoadline     | 14.3  | 4.83  | 4.2   | 4.2   |
+	#+----------------+-------+-------+-------+-------+
+	register "domain_vr_config[VR_SYSTEM_AGENT]" = "{
+		.vr_config_enable = 1,
+		.psi1threshold = VR_CFG_AMP(20),
+		.psi2threshold = VR_CFG_AMP(2),
+		.psi3threshold = VR_CFG_AMP(1),
+		.psi3enable = 1,
+		.psi4enable = 1,
+		.imon_slope = 0x0,
+		.imon_offset = 0x0,
+		.icc_max = VR_CFG_AMP(5),
+		.voltage_limit = 1520,
+		.ac_loadline = 1500,
+		.dc_loadline = 1430,
+	}"
+
+	register "domain_vr_config[VR_IA_CORE]" = "{
+		.vr_config_enable = 1,
+		.psi1threshold = VR_CFG_AMP(20),
+		.psi2threshold = VR_CFG_AMP(2),
+		.psi3threshold = VR_CFG_AMP(1),
+		.psi3enable = 1,
+		.psi4enable = 1,
+		.imon_slope = 0x0,
+		.imon_offset = 0x0,
+		.icc_max = VR_CFG_AMP(24),
+		.voltage_limit = 1520,
+		.ac_loadline = 570,
+		.dc_loadline = 483,
+	}"
+
+	register "domain_vr_config[VR_GT_UNSLICED]" = "{
+		.vr_config_enable = 1,
+		.psi1threshold = VR_CFG_AMP(20),
+		.psi2threshold = VR_CFG_AMP(2),
+		.psi3threshold = VR_CFG_AMP(1),
+		.psi3enable = 1,
+		.psi4enable = 1,
+		.imon_slope = 0x0,
+		.imon_offset = 0x0,
+		.icc_max = VR_CFG_AMP(24),
+		.voltage_limit = 1520,
+		.ac_loadline = 550,
+		.dc_loadline = 420,
+	}"
+
+	register "domain_vr_config[VR_GT_SLICED]" = "{
+		.vr_config_enable = 1,
+		.psi1threshold = VR_CFG_AMP(20),
+		.psi2threshold = VR_CFG_AMP(2),
+		.psi3threshold = VR_CFG_AMP(1),
+		.psi3enable = 1,
+		.psi4enable = 1,
+		.imon_slope = 0x0,
+		.imon_offset = 0x0,
+		.icc_max = VR_CFG_AMP(24),
+		.voltage_limit = 1520,
+		.ac_loadline = 550,
+		.dc_loadline = 420,
+	}"
+
+	# Intel Common SoC Config
+	#+-------------------+---------------------------+
+	#| Field             |  Value                    |
+	#+-------------------+---------------------------+
+	#| I2C0              | Touchscreen               |
+	#| I2C1              | cr50 TPM. Early init is   |
+	#|                   | required to set up a BAR  |
+	#|                   | for TPM communication     |
+	#|                   | before memory is up       |
+	#| I2C2              | Camera                    |
+	#| I2C4              | Camera                    |
+	#| I2C5              | Audio                     |
+	#| pch_thermal_trip  | PCH Trip Temperature      |
+	#+-------------------+---------------------------+
+	register "common_soc_config" = "{
+		.i2c[0] = {
+			.speed = I2C_SPEED_FAST,
+			.speed_config[0] = {
+				.speed = I2C_SPEED_FAST,
+				.scl_lcnt = 180,
+				.scl_hcnt = 85,
+				.sda_hold = 36,
+				},
+		},
+		.i2c[1] = {
+			.early_init = 1,
+			.speed = I2C_SPEED_FAST,
+			.speed_config[0] = {
+				.speed = I2C_SPEED_FAST,
+				.scl_lcnt = 190,
+				.scl_hcnt = 90,
+				.sda_hold = 36,
+			},
+		},
+		.i2c[2] = {
+			.speed = I2C_SPEED_FAST,
+			.speed_config[0] = {
+				.speed = I2C_SPEED_FAST,
+				.scl_lcnt = 192,
+				.scl_hcnt = 90,
+				.sda_hold = 36,
+			},
+		},
+		.i2c[4] = {
+			.speed = I2C_SPEED_FAST,
+			.speed_config[0] = {
+				.speed = I2C_SPEED_FAST,
+				.scl_lcnt = 190,
+				.scl_hcnt = 90,
+				.sda_hold = 36,
+			},
+		},
+		.i2c[5] = {
+			.speed = I2C_SPEED_FAST,
+			.speed_config[0] = {
+				.speed = I2C_SPEED_FAST,
+				.scl_lcnt = 190,
+				.scl_hcnt = 90,
+				.sda_hold = 36,
+			},
+		},
+		.pch_thermal_trip = 75,
+	}"
+
+	# Touchscreen
+	register "i2c_voltage[0]" = "I2C_VOLTAGE_3V3"
+
+	# H1
+	# Configure I2C1 for cr50 TPM. Early init is required to set up a BAR
+	# for TPM communication before memory is up.
+	register "i2c_voltage[1]" = "I2C_VOLTAGE_3V3"
+
+	# Camera
+	register "i2c_voltage[2]" = "I2C_VOLTAGE_1V8"
+
+	# Camera
+	register "i2c_voltage[4]" = "I2C_VOLTAGE_1V8"
+
+	# Audio
+	register "i2c_voltage[5]" = "I2C_VOLTAGE_1V8"
+
+	# Must leave UART0 enabled or SD/eMMC will not work as PCI
+	register "SerialIoDevMode" = "{
+		[PchSerialIoIndexI2C0]  = PchSerialIoPci,
+		[PchSerialIoIndexI2C1]  = PchSerialIoPci,
+		[PchSerialIoIndexI2C2]  = PchSerialIoPci,
+		[PchSerialIoIndexI2C3]  = PchSerialIoDisabled,
+		[PchSerialIoIndexI2C4]  = PchSerialIoPci,
+		[PchSerialIoIndexI2C5]  = PchSerialIoPci,
+		[PchSerialIoIndexSpi0]  = PchSerialIoDisabled,
+		[PchSerialIoIndexSpi1]  = PchSerialIoDisabled,
+		[PchSerialIoIndexUart0] = PchSerialIoSkipInit,
+		[PchSerialIoIndexUart1] = PchSerialIoDisabled,
+		[PchSerialIoIndexUart2] = PchSerialIoSkipInit,
+	}"
+
+	# PL2 override 15W for KBL-Y
+	register "power_limits_config" = "{
+		.tdp_pl2_override = 15,
+		.psys_pmax = 45,
+	}"
+	register "tcc_offset" = "10"     # TCC of 90C
+
+	# Use default SD card detect GPIO configuration
+	register "sdcard_cd_gpio" = "GPP_E15"
+
+	device domain 0 on
+		device ref igpu			on
+			chip drivers/gfx/generic
+				register "device_count" = "2"
+				register "device[0].name" = ""LCD0""
+				# Internal panel on the first port of the graphics chip
+				register "device[0].type" = "panel"
+				# SKC0 for IPUs
+				register "device[1].name" = ""SKC0""
+				register "device[1].non_vga_device" = "true"
+				register "device[1].addr" = "0xCA00"
+				device generic 0 on end
+			end
+		end
+		device ref sa_thermal		on  end
+		device ref imgu			on  end
+		device ref south_xhci		on
+			register "usb2_ports" = "{
+				[0] = USB2_PORT_LONG(OC0),	// Type-C Port 1
+				[1] = USB2_PORT_MID(OC_SKIP),	// Type-A Port
+				[2] = USB2_PORT_MID(OC_SKIP),	// Bluetooth
+				[4] = USB2_PORT_MAX(OC1),	// Type-C Port 2
+				[6] = USB2_PORT_MID(OC_SKIP),	// Type-A Port
+				[8] = USB2_PORT_MID(OC_SKIP),	// Type-A Port
+			}"
+
+			register "usb3_ports" = "{
+				[0] = USB3_PORT_DEFAULT(OC0),	// Type-C Port 1
+				[1] = USB3_PORT_DEFAULT(OC1),	// Type-C Port 2
+				[2] = USB3_PORT_DEFAULT(OC_SKIP),	// Type-A Port
+			}"
+		end
+		device ref south_xdci		on  end
+		device ref thermal		on  end
+		device ref cio			on  end
+		device ref i2c0			on
+			chip drivers/i2c/hid
+				register "generic.hid" = ""WCOMCOHO""
+				register "generic.desc" = ""WCOM Touchscreen""
+				register "generic.irq" = "ACPI_IRQ_LEVEL_LOW(GPP_E7_IRQ)"
+				register "generic.detect" = "1"
+				register "generic.reset_gpio" = "ACPI_GPIO_OUTPUT_ACTIVE_LOW(GPP_E3)"
+				register "generic.reset_delay_ms" = "10"
+				register "generic.enable_gpio" = "ACPI_GPIO_OUTPUT_ACTIVE_HIGH(GPP_C22)"
+				register "generic.enable_delay_ms" = "1"
+				register "generic.stop_gpio" = "ACPI_GPIO_OUTPUT_ACTIVE_LOW(GPP_E11)"
+				register "generic.has_power_resource" = "1"
+				register "hid_desc_reg_offset" = "0x1"
+				device i2c 0xA on end
+			end
+		end
+		device ref i2c1			on
+			chip drivers/i2c/tpm
+				register "hid" = ""GOOG0005""
+				register "irq" = "ACPI_IRQ_EDGE_LOW(GPP_E0_IRQ)"
+				device i2c 50 on end
+			end
+		end
+		device ref i2c2			on
+			chip drivers/intel/mipi_camera/pmic
+				register "acpi_uid" = "0"
+				register "acpi_name" = ""CLP0""
+				register "acpi_sta" = ""\\_SB.PCI0.CSTA""
+
+				register "cldb.pmic_type" = "CL_TYPE_TPS68470"
+				register "cldb.pmic_id" = "PMIC_NODE_1"
+				register "cldb.sensor_card_sku.card_type" = "SKU_CRD_G2"
+				register "cldb.platform" = "PLAT_SKC"
+				register "cldb.platform_sub" = "PLAT_SUB_FFD"
+
+				register "has_power_resource" = "true"
+				register "reset_once" = "true"
+				register "use_gpio_for_status" = "true"
+				register "enable_gpio" = "ACPI_GPIO_OUTPUT_ACTIVE_HIGH(GPP_C11)" #EN_PP3300_DX_CAM
+				register "enable_delay_ms" = "3"
+				register "reset_gpio" = "ACPI_GPIO_OUTPUT_ACTIVE_LOW(GPP_C10)" #EN_CAM_PMIC_RST_L
+				register "reset_delay_ms" = "3"
+				device i2c 4d on end
+			end
+			chip drivers/intel/mipi_camera
+				register "acpi_hid" = ""OVTID858""
+				register "acpi_uid" = "0"
+				register "acpi_name" = ""CAM0""
+				register "acpi_sta" = ""\\_SB.PCI0.CSTA""
+				register "acpi_dep" = ""\\_SB.PCI0.I2C2.CLP0""
+				register "chip_name" = ""OV 13858 Camera""
+				register "sensor_name" = ""7BAD06T2""
+				register "device_type" = "INTEL_ACPI_CAMERA_SENSOR"
+
+				register "ssdb.sensor_card_sku.card_type" = "SKU_CRD_G2"
+				register "ssdb.control_logic_id" = "PMIC_NODE_1"
+				register "ssdb.camera_position" = "CAM_POS_CRD_G2_LEFT"
+
+				register "ssdb.lanes_used" = "4"
+				register "ssdb.link_used" = "0"
+				register "ssdb.platform" = "PLAT_SKC"
+				register "ssdb.platform_sub" = "PLAT_SUB_FFD"
+				register "ssdb.mclk_speed" = "CLK_FREQ_19_2MHZ"
+				register "num_freq_entries" = "2"
+				register "link_freq[0]" = "540000000"
+				register "link_freq[1]" = "270000000"
+
+				register "ssdb.vcm_type" = "VCM_DW9714"
+				register "vcm_address" = "0x0C"
+
+				register "ssdb.rom_type" = "ROM_EEPROM_CAT24C16"
+				register "rom_address" = "0x50"
+
+				register "pld.panel" = "PLD_PANEL_BACK"
+				register "pld.vertical_position" = "PLD_VERTICAL_POSITION_CENTER"
+				register "pld.horizontal_position" = "PLD_HORIZONTAL_POSITION_CENTER"
+
+				device i2c 10 on end
+			end
+		end
+		device ref heci1		on  end
+		device ref uart2		on  end
+		device ref i2c4			on
+			chip drivers/intel/mipi_camera
+				register "acpi_hid" = ""INT3479""
+				register "acpi_uid" = "1"
+				register "acpi_name" = ""CAM1""
+				register "acpi_sta" = ""\\_SB.PCI0.CSTA""
+				register "acpi_dep" = ""\\_SB.PCI0.I2C2.CLP0""
+				register "chip_name" = ""OV 5670 Camera""
+				register "sensor_name" = ""4BF523T2""
+				register "device_type" = "INTEL_ACPI_CAMERA_SENSOR"
+
+				register "ssdb.sensor_card_sku.card_type" = "SKU_CRD_G2"
+				register "ssdb.control_logic_id" = "PMIC_NODE_1"
+				register "ssdb.camera_position" = "CAM_POS_CRD_G2_RIGHT"
+
+				register "ssdb.lanes_used" = "2"
+				register "ssdb.link_used" = "1"
+				register "ssdb.platform" = "PLAT_SKC"
+				register "ssdb.platform_sub" = "PLAT_SUB_FFD"
+				register "ssdb.mclk_speed" = "CLK_FREQ_19_2MHZ"
+				register "num_freq_entries" = "1"
+				register "link_freq[0]" = "422400000"
+
+				register "pld.panel" = "PLD_PANEL_FRONT"
+				register "pld.vertical_position" = "PLD_VERTICAL_POSITION_CENTER"
+				register "pld.horizontal_position" = "PLD_HORIZONTAL_POSITION_CENTER"
+
+				device i2c 36 on end
+			end
+		end
+		device ref i2c5			on
+			chip drivers/i2c/max98927
+				register "interleave_mode" = "1"
+				register "vmon_slot_no" = "4"
+				register "imon_slot_no" = "5"
+				register "uid" = "0"
+				register "desc" = ""SSM4567 Right Speaker Amp""
+				register "name" = ""MAXR""
+				device i2c 39 on end
+			end
+			chip drivers/i2c/max98927
+				register "interleave_mode" = "1"
+				register "vmon_slot_no" = "6"
+				register "imon_slot_no" = "7"
+				register "uid" = "1"
+				register "desc" = ""SSM4567 Left Speaker Amp""
+				register "name" = ""MAXL""
+				device i2c 3A on end
+			end
+			chip drivers/i2c/generic
+				register "hid" = ""10EC5663""
+				register "name" = ""RT53""
+				register "desc" = ""Realtek RT5663""
+				register "irq_gpio" = "ACPI_GPIO_IRQ_EDGE_BOTH(GPP_D9)"
+				register "probed" = "1"
+				device i2c 13 on end
+			end
+		end
+		device ref pcie_rp1		on
+			register "PcieRpClkReqSupport[0]" = "true"
+			register "PcieRpClkReqNumber[0]" = "1"
+			register "PcieRpAdvancedErrorReporting[0]" = "1"
+			register "PcieRpLtrEnable[0]" = "true"
+			register "PcieRpClkSrcNumber[0]" = "1"
+			chip drivers/wifi/generic
+				register "wake" = "GPE0_PCI_EXP"
+				device pci 00.0 on end
+			end
+		end
+		device ref uart0	 	on  end
+		device ref emmc		 	on  end
+		device ref sdxc		 	on  end
+		device ref lpc_espi		on
+			# EC host command ranges are in 0x800-0x8ff & 0x200-0x20f
+			register "gen1_dec" = "LPC_IO(0x800, 0x100)"
+			register "gen2_dec" = "LPC_IO(0x200, 0x10)"
+			# EC memory map range is 0x900-0x9ff
+			register "gen3_dec" = "LPC_IO(0x900, 0x100)"
+
+			chip ec/google/chromeec
+				device pnp 0c09.0 on end
+			end
+		end
+		device ref hda 			on  end
+		device ref smbus	 	on  end
+		device ref fast_spi 		on  end
+	end
+end

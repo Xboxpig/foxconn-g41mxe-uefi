@@ -1,0 +1,10 @@
+** Build from MediaTek Internal **
+
+# Version 1.2
+1. Enable the CPU 3.0GHz setting.
+
+# Version 1.1
+1. Enable the CPU DVFS feature.
+
+# Version 1.0
+1. Initial release.

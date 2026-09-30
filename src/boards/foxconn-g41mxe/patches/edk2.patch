@@ -1,0 +1,1427 @@
+diff --git a/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenu.c b/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenu.c
+index 5bba6ea..7157867 100644
+--- a/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenu.c
++++ b/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenu.c
+@@ -6,7 +6,8 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ 
+ **/
+ 
+-#include "BootManagerMenu.h"
++#include "BootManagerMenu.h"
++#include <Library/G41SetupTrace.h>
+ 
+ EFI_HII_HANDLE  gStringPackHandle;
+ 
+@@ -1005,7 +1006,9 @@ BootManagerMenuEntry (
+   EFI_GRAPHICS_OUTPUT_PROTOCOL     *GraphicsOutput;
+   EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL  *SimpleTextOut;
+   UINTN                            BootTextColumn;
+-  UINTN                            BootTextRow;
++  UINTN                            BootTextRow;
++
++  G41SetupTrace (L"M01 BootManagerMenu entered; adding HII strings");
+ 
+   //
+   // Set Logo status invalid when boot manager menu is launched
+@@ -1027,13 +1030,22 @@ BootManagerMenuEntry (
+                         );
+   ASSERT (gStringPackHandle != NULL);
+ 
+-  //
+-  // Connect all prior to entering the platform setup menu.
+-  //
+-  EfiBootManagerConnectAll ();
+-  EfiBootManagerRefreshAllBootOption ();
+-
+-  BootOption = EfiBootManagerGetLoadOptions (&BootOptionCount, LoadOptionTypeBoot);
++  //
++  // Connect all prior to entering the platform setup menu.
++  // G41MXE keeps discovery lazy here as well as in PlatformBootManagerLib.
++  // Otherwise the setup hotkey simply repeats the same legacy-controller
++  // ConnectAll() scan after the fast platform hook has skipped it.
++  //
++#ifndef G41MXE_FAST_SETUP
++  G41SetupTrace (L"M02 connecting all devices");
++  EfiBootManagerConnectAll ();
++  G41SetupTrace (L"M03 refreshing boot options");
++  EfiBootManagerRefreshAllBootOption ();
++#endif
++
++  G41SetupTrace (L"M04 reading BootOrder and Boot####");
++  BootOption = EfiBootManagerGetLoadOptions (&BootOptionCount, LoadOptionTypeBoot);
++  G41SetupTrace (L"M05 boot options ready; querying console mode");
+ 
+   if (!mModeInitialized) {
+     //
+@@ -1090,7 +1102,9 @@ BootManagerMenuEntry (
+   //
+   // Set back to conventional setup resolution
+   //
+-  BdsSetConsoleMode (TRUE);
++  G41SetupTrace (L"M06 switching BootManagerMenu console mode");
++  BdsSetConsoleMode (TRUE);
++  G41SetupTrace (L"M07 initializing BootManagerMenu data");
+ 
+   //
+   // Initialize Boot menu data
+@@ -1104,7 +1118,8 @@ BootManagerMenuEntry (
+   //
+   // According to boot menu data to draw boot popup menu
+   //
+-  DrawBootPopupMenu (&BootMenuData);
++  G41SetupTrace (L"M08 drawing BootManagerMenu");
++  DrawBootPopupMenu (&BootMenuData);
+ 
+   //
+   // check user input to determine want to re-draw or boot from user selected item
+diff --git a/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf b/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf
+index 3dee248..201ea41 100644
+--- a/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf
++++ b/MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf
+@@ -33,8 +33,11 @@
+   MdePkg/MdePkg.dec
+   MdeModulePkg/MdeModulePkg.dec
+ 
+-[LibraryClasses]
+-  HiiLib
++[LibraryClasses]
++  BaseLib
++  TimerLib
++  UefiRuntimeServicesTableLib
++  HiiLib
+   DebugLib
+   UefiLib
+   MemoryAllocationLib
+diff --git a/MdeModulePkg/Application/UiApp/FrontPage.c b/MdeModulePkg/Application/UiApp/FrontPage.c
+index 8765020..b8389b1 100644
+--- a/MdeModulePkg/Application/UiApp/FrontPage.c
++++ b/MdeModulePkg/Application/UiApp/FrontPage.c
+@@ -9,12 +9,29 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ 
+ #include "FrontPage.h"
+ #include "FrontPageCustomizedUi.h"
+-#include <Protocol/BatteryStatus.h>
+-#include <Protocol/HiiPopup.h>
++#include <Protocol/BatteryStatus.h>
++#include <Protocol/HiiPopup.h>
++#include <Library/G41SetupTrace.h>
++#ifdef G41MXE_SETUP_TRACE
++#include <Library/MtrrLib.h>
++#endif
+ 
+ #define MAX_STRING_LEN  200
+ 
+-EFI_GUID  mFrontPageGuid = FRONT_PAGE_FORMSET_GUID;
++EFI_GUID  mFrontPageGuid = FRONT_PAGE_FORMSET_GUID;
++
++#ifdef ASUS_SETUP_PAGE_LAB
++#define ASUS_SETUP_MAIN_FORM_ID  0x2710
++
++//
++// Package-list GUID installed by the unmodified PRIME Z490-A Setup driver.
++// This experiment deliberately selects that package list instead of asking
++// AMITSE to interpret UiApp's EDK II front page.
++//
++STATIC EFI_GUID  mAsusSetupPackageListGuid = {
++  0x899407d7, 0x99fe, 0x43d8, { 0x9a, 0x21, 0x79, 0xec, 0x32, 0x8c, 0xac, 0x21 }
++};
++#endif
+ 
+ BOOLEAN  mResetRequired = FALSE;
+ 
+@@ -25,7 +42,8 @@ EFI_EVENT                           mBatteryUpdateTimer = NULL;
+ BOOLEAN                             mFrontPageActive = FALSE;
+ STATIC EFI_BATTERY_STATUS_PROTOCOL *mBatteryStatusProtocol = NULL;
+ STATIC UINT8                        mLastBatteryPercentage = 0xFF;
+-STATIC BOOLEAN                      mLastBatteryCharging = FALSE;
++STATIC BOOLEAN                      mLastBatteryCharging = FALSE;
++#define SetupTrace(Stage)  G41SetupTrace (Stage)
+ //
+ // Boot video resolution and text mode.
+ //
+@@ -575,13 +593,27 @@ InitializeFrontPage (
+             EFI_FORM_BROWSER2_PROTOCOL.SendForm ().
+ 
+ **/
+-EFI_STATUS
+-CallFrontPage (
+-  VOID
+-  )
+-{
+-  EFI_STATUS                  Status;
+-  EFI_BROWSER_ACTION_REQUEST  ActionRequest;
++EFI_STATUS
++CallFrontPage (
++  VOID
++  )
++{
++  EFI_STATUS                  Status;
++  EFI_BROWSER_ACTION_REQUEST  ActionRequest;
++#ifdef ASUS_SETUP_PAGE_LAB
++  EFI_STATUS                   LabStatus;
++  EFI_HII_HANDLE               *HiiHandles;
++  EFI_HII_PACKAGE_LIST_HEADER  *PackageList;
++  UINTN                        HandleBufferSize;
++  UINTN                        HandleCount;
++  UINTN                        Index;
++  UINTN                        PackageListSize;
++  EFI_IFR_FORM_SET             *FormSets;
++  EFI_IFR_FORM_SET             *FormSet;
++  UINTN                        FormSetsSize;
++  UINTN                        FormSetOffset;
++  BOOLEAN                      AsusSetupFound;
++#endif
+ 
+   //
+   // Begin waiting for USER INPUT
+@@ -591,18 +623,163 @@ CallFrontPage (
+     (EFI_SOFTWARE_DXE_BS_DRIVER | EFI_SW_PC_INPUT_WAIT)
+     );
+ 
+-  ActionRequest = EFI_BROWSER_ACTION_REQUEST_NONE;
+-  Status        = gFormBrowser2->SendForm (
+-                                   gFormBrowser2,
+-                                   &gFrontPagePrivate.HiiHandle,
++  ActionRequest = EFI_BROWSER_ACTION_REQUEST_NONE;
++#ifdef ASUS_SETUP_PAGE_LAB
++  Status = EFI_NOT_FOUND;
++#else
++  SetupTrace (L"08 native FormBrowser SendForm");
++  Status        = gFormBrowser2->SendForm (
++                                   gFormBrowser2,
++                                   &gFrontPagePrivate.HiiHandle,
+                                    1,
+                                    &mFrontPageGuid,
+                                    0,
+                                    NULL,
+-                                   &ActionRequest
+-                                   );
+-  //
+-  // Check whether user change any option setting which needs a reset to be effective
++                                   &ActionRequest
++                                   );
++#endif
++
++#ifdef ASUS_SETUP_PAGE_LAB
++  //
++  // In the page-capture build, bypass the unrelated EDK II front-page form set
++  // and pass the original ASUS Setup HII handle straight back to AMITSE.
++  //
++  if (EFI_ERROR (Status)) {
++    SetupTrace (L"07 ASUS HII package lookup");
++    HiiHandles      = NULL;
++    HandleBufferSize = 0;
++    LabStatus = gHiiDatabase->ListPackageLists (
++                               gHiiDatabase,
++                               EFI_HII_PACKAGE_FORMS,
++                               NULL,
++                               &HandleBufferSize,
++                               NULL
++                               );
++    if (LabStatus == EFI_BUFFER_TOO_SMALL) {
++      HiiHandles = AllocateZeroPool (HandleBufferSize);
++      if (HiiHandles == NULL) {
++        LabStatus = EFI_OUT_OF_RESOURCES;
++      } else {
++        LabStatus = gHiiDatabase->ListPackageLists (
++                                   gHiiDatabase,
++                                   EFI_HII_PACKAGE_FORMS,
++                                   NULL,
++                                   &HandleBufferSize,
++                                   HiiHandles
++                                   );
++      }
++    }
++
++    if (!EFI_ERROR (LabStatus)) {
++      HandleCount = HandleBufferSize / sizeof (HiiHandles[0]);
++      LabStatus   = EFI_NOT_FOUND;
++      AsusSetupFound = FALSE;
++      for (Index = 0; Index < HandleCount; Index++) {
++        PackageListSize = 0;
++        PackageList     = NULL;
++        Status = gHiiDatabase->ExportPackageLists (
++                                 gHiiDatabase,
++                                 HiiHandles[Index],
++                                 &PackageListSize,
++                                 NULL
++                                 );
++        if (Status == EFI_BUFFER_TOO_SMALL) {
++          PackageList = AllocatePool (PackageListSize);
++          if (PackageList == NULL) {
++            LabStatus = EFI_OUT_OF_RESOURCES;
++            break;
++          }
++
++          Status = gHiiDatabase->ExportPackageLists (
++                                   gHiiDatabase,
++                                   HiiHandles[Index],
++                                   &PackageListSize,
++                                   PackageList
++                                   );
++        }
++
++        if (!EFI_ERROR (Status)) {
++          DEBUG ((
++            DEBUG_INFO,
++            "ASUS page lab: HII[%u]=%p package-list=%g\n",
++            (UINT32)Index,
++            HiiHandles[Index],
++            &PackageList->PackageListGuid
++            ));
++          if (CompareGuid (&PackageList->PackageListGuid, &mAsusSetupPackageListGuid)) {
++            AsusSetupFound = TRUE;
++            FormSets       = NULL;
++            FormSetsSize   = 0;
++            FormSetOffset  = 0;
++            LabStatus = HiiGetFormSetFromHiiHandle (
++                          HiiHandles[Index],
++                          &FormSets,
++                          &FormSetsSize
++                          );
++            if (!EFI_ERROR (LabStatus)) {
++              LabStatus = EFI_NOT_FOUND;
++              while (FormSetOffset + sizeof (EFI_IFR_FORM_SET) <= FormSetsSize) {
++                FormSet = (EFI_IFR_FORM_SET *)((UINT8 *)FormSets + FormSetOffset);
++                if ((FormSet->Header.Length < sizeof (EFI_IFR_FORM_SET)) ||
++                    (FormSetOffset + FormSet->Header.Length > FormSetsSize))
++                {
++                  LabStatus = EFI_COMPROMISED_DATA;
++                  break;
++                }
++
++                DEBUG ((
++                  DEBUG_INFO,
++                  "ASUS page lab: launching original FormSet=%g with AMITSE\n",
++                  &FormSet->Guid
++                  ));
++                ActionRequest = EFI_BROWSER_ACTION_REQUEST_NONE;
++                SetupTrace (L"08 ASUS FormBrowser SendForm");
++                LabStatus = gFormBrowser2->SendForm (
++                                            gFormBrowser2,
++                                            &HiiHandles[Index],
++                                            1,
++                                            &FormSet->Guid,
++                                            ASUS_SETUP_MAIN_FORM_ID,
++                                            NULL,
++                                            &ActionRequest
++                                            );
++                if (LabStatus != EFI_NOT_FOUND) {
++                  break;
++                }
++
++                FormSetOffset += FormSet->Header.Length;
++              }
++            }
++
++            if (FormSets != NULL) {
++              FreePool (FormSets);
++            }
++          }
++        }
++
++        if (PackageList != NULL) {
++          FreePool (PackageList);
++        }
++
++        if (AsusSetupFound || (LabStatus == EFI_OUT_OF_RESOURCES)) {
++          break;
++        }
++      }
++    }
++
++    if (HiiHandles != NULL) {
++      FreePool (HiiHandles);
++    }
++
++    DEBUG ((DEBUG_INFO, "ASUS page lab: launcher returned %r\n", LabStatus));
++    Status = LabStatus;
++  }
++#endif
++  if (EFI_ERROR (Status)) {
++    SetupTrace (L"09 FormBrowser returned an EFI error");
++  }
++  //
++  // Check whether user change any option setting which needs a reset to be effective
+   //
+   if (ActionRequest == EFI_BROWSER_ACTION_REQUEST_RESET) {
+     EnableResetRequired ();
+@@ -1271,9 +1448,10 @@ InitializeUserInterface (
+   EFI_GRAPHICS_OUTPUT_PROTOCOL     *GraphicsOutput;
+   EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL  *SimpleTextOut;
+   UINTN                            BootTextColumn;
+-  UINTN                            BootTextRow;
+-
+-  if (!mModeInitialized) {
++  UINTN                            BootTextRow;
++
++  SetupTrace (L"U00 UiApp entry; querying console mode");
++  if (!mModeInitialized) {
+     //
+     // After the console is ready, get current video resolution
+     // and text mode before launching setup at first time.
+@@ -1300,8 +1478,17 @@ InitializeUserInterface (
+       //
+       // Get current video resolution and text mode.
+       //
+-      mBootHorizontalResolution = GraphicsOutput->Mode->Info->HorizontalResolution;
+-      mBootVerticalResolution   = GraphicsOutput->Mode->Info->VerticalResolution;
++      mBootHorizontalResolution = GraphicsOutput->Mode->Info->HorizontalResolution;
++      mBootVerticalResolution   = GraphicsOutput->Mode->Info->VerticalResolution;
++#ifdef G41MXE_SETUP_TRACE
++      DEBUG ((DEBUG_ERROR, "G41MXE graphics: %ux%u stride=%u FB=0x%Lx size=0x%Lx CR0=0x%Lx MTRR-type=%u (PAT/page attributes not included)\n",
++              mBootHorizontalResolution, mBootVerticalResolution,
++              GraphicsOutput->Mode->Info->PixelsPerScanLine,
++              GraphicsOutput->Mode->FrameBufferBase,
++              (UINT64)GraphicsOutput->Mode->FrameBufferSize,
++              (UINT64)AsmReadCr0 (),
++              (UINT32)MtrrGetMemoryAttribute (GraphicsOutput->Mode->FrameBufferBase)));
++#endif
+     }
+ 
+     if (SimpleTextOut != NULL) {
+@@ -1326,22 +1513,33 @@ InitializeUserInterface (
+     mModeInitialized = TRUE;
+   }
+ 
+-  gBS->SetWatchdogTimer (0x0000, 0x0000, 0x0000, NULL);
+-  gST->ConOut->ClearScreen (gST->ConOut);
++  gBS->SetWatchdogTimer (0x0000, 0x0000, 0x0000, NULL);
++  SetupTrace (L"U01 console mode queried; clearing screen");
++  gST->ConOut->ClearScreen (gST->ConOut);
++  SetupTrace (L"01 UiApp entered; exporting fonts");
+ 
+   //
+   // Install customized fonts needed by Front Page
+   //
+-  HiiHandle = ExportFonts ();
++  HiiHandle = ExportFonts ();
+   if (HiiHandle == NULL) {
+     ASSERT (HiiHandle != NULL);
+     return EFI_NOT_FOUND;
+-  }
+-
+-  InitializeStringSupport ();
+-
+-  UiSetConsoleMode (TRUE);
+-  UiEntry (FALSE);
++  }
++
++  SetupTrace (L"02 fonts ready; initializing strings");
++  InitializeStringSupport ();
++
++  SetupTrace (L"03 switching to Setup console mode");
++  UiSetConsoleMode (TRUE);
++  SetupTrace (L"04 Setup console mode ready");
++  //
++  // UefiPayloadPkg's PlatformBootManagerAfterConsole() connects devices and
++  // refreshes boot options before this setup application can be launched.
++  // Repeating both operations here is particularly expensive on legacy IDE
++  // and USB controllers.
++  //
++  UiEntry (TRUE);
+   UiSetConsoleMode (FALSE);
+ 
+   UninitializeStringSupport ();
+@@ -1359,7 +1557,7 @@ InitializeUserInterface (
+ **/
+ VOID
+ EFIAPI
+-UiEntry (
++UiEntry (
+   IN BOOLEAN  ConnectAllHappened
+   )
+ {
+@@ -1378,26 +1576,24 @@ UiEntry (
+   // Indicate if the connect all has been performed before.
+   // If has not been performed before, do here.
+   //
+-  if (!ConnectAllHappened) {
+-    EfiBootManagerConnectAll ();
+-  }
+-
+-  //
+-  // The boot option enumeration time is acceptable in Ui driver
+-  //
+-  EfiBootManagerRefreshAllBootOption ();
++  if (!ConnectAllHappened) {
++    EfiBootManagerConnectAll ();
++    EfiBootManagerRefreshAllBootOption ();
++  }
+ 
+   //
+   // Boot Logo is corrupted, report it using Boot Logo protocol.
+   //
+   Status = gBS->LocateProtocol (&gEfiBootLogoProtocolGuid, NULL, (VOID **)&BootLogo);
+-  if (!EFI_ERROR (Status) && (BootLogo != NULL)) {
+-    BootLogo->SetBootLogo (BootLogo, NULL, 0, 0, 0, 0);
+-  }
+-
+-  InitializeFrontPage ();
+-
+-  CallFrontPage ();
++  if (!EFI_ERROR (Status) && (BootLogo != NULL)) {
++    BootLogo->SetBootLogo (BootLogo, NULL, 0, 0, 0, 0);
++  }
++
++  SetupTrace (L"05 initializing FrontPage HII");
++  InitializeFrontPage ();
++
++  SetupTrace (L"06 FrontPage HII ready");
++  CallFrontPage ();
+ 
+   FreeFrontPage ();
+ 
+diff --git a/MdeModulePkg/Application/UiApp/UiApp.inf b/MdeModulePkg/Application/UiApp/UiApp.inf
+index 03e142d..c278d4f 100644
+--- a/MdeModulePkg/Application/UiApp/UiApp.inf
++++ b/MdeModulePkg/Application/UiApp/UiApp.inf
+@@ -37,7 +37,8 @@
+ 
+ [Packages]
+   MdePkg/MdePkg.dec
+-  MdeModulePkg/MdeModulePkg.dec
++  MdeModulePkg/MdeModulePkg.dec
++  UefiCpuPkg/UefiCpuPkg.dec
+ 
+ [LibraryClasses]
+   DevicePathLib
+@@ -54,7 +55,9 @@
+   UefiApplicationEntryPoint
+   PcdLib
+   UefiHiiServicesLib
+-  UefiBootManagerLib
++  UefiBootManagerLib
++  TimerLib
++  MtrrLib
+ 
+ [Guids]
+   gEfiIfrTianoGuid                              ## CONSUMES ## GUID (Extended IFR Guid Opcode)
+diff --git a/MdeModulePkg/Library/DeviceManagerUiLib/DeviceManager.c b/MdeModulePkg/Library/DeviceManagerUiLib/DeviceManager.c
+index 5d6164a..870ef5d 100644
+--- a/MdeModulePkg/Library/DeviceManagerUiLib/DeviceManager.c
++++ b/MdeModulePkg/Library/DeviceManagerUiLib/DeviceManager.c
+@@ -6,7 +6,12 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ 
+ **/
+ 
+-#include "DeviceManager.h"
++#include "DeviceManager.h"
++#include <Library/G41SetupTrace.h>
++
++#ifdef G41MXE_FAST_SETUP
++STATIC BOOLEAN  mG41DevicesConnected;
++#endif
+ 
+ DEVICE_MANAGER_CALLBACK_DATA  gDeviceManagerPrivate = {
+   DEVICE_MANAGER_CALLBACK_DATA_SIGNATURE,
+@@ -529,9 +534,20 @@ CreateDeviceManagerForm (
+   EFI_GUID            *ClassGuid;
+   UINTN               TempSize;
+   UINT8               *Ptr;
+-  EFI_STATUS          Status;
+-
+-  TempSize   = 0;
++  EFI_STATUS          Status;
++
++#ifdef G41MXE_FAST_SETUP
++  if (!mG41DevicesConnected) {
++    // Enumerate devices when this page is actually requested, not during
++    // UiApp's constructors before the Setup application entry point.
++    mG41DevicesConnected = TRUE;
++    G41SetupTrace (L"D03 Device Manager requested; connecting devices");
++    EfiBootManagerConnectAll ();
++    G41SetupTrace (L"D04 Device Manager devices connected");
++  }
++#endif
++
++  TempSize   = 0;
+   BufferSize = 0;
+   Buffer     = NULL;
+ 
+@@ -919,9 +935,10 @@ DeviceManagerUiLibConstructor (
+   IN EFI_SYSTEM_TABLE  *SystemTable
+   )
+ {
+-  EFI_STATUS  Status;
+-
+-  gDeviceManagerPrivate.DriverHandle = NULL;
++  EFI_STATUS  Status;
++
++  G41SetupTrace (L"D00 Device Manager constructor; publishing HII");
++  gDeviceManagerPrivate.DriverHandle = NULL;
+   Status                             = gBS->InstallMultipleProtocolInterfaces (
+                                               &gDeviceManagerPrivate.DriverHandle,
+                                               &gEfiDevicePathProtocolGuid,
+@@ -947,9 +964,14 @@ DeviceManagerUiLibConstructor (
+   //
+   // The device manager form contains a page listing all the network
+   // controllers in the system. This list can only be populated if all
+-  // handles have been connected, so do it here.
+-  //
+-  EfiBootManagerConnectAll ();
++  // handles have been connected. The fast Setup path defers that work
++  // until CreateDeviceManagerForm(), when the user opens this page.
++  //
++#ifndef G41MXE_FAST_SETUP
++  G41SetupTrace (L"D01 constructor ConnectAll");
++  EfiBootManagerConnectAll ();
++#endif
++  G41SetupTrace (L"D02 Device Manager constructor ready");
+ 
+   return EFI_SUCCESS;
+ }
+diff --git a/MdeModulePkg/Library/DeviceManagerUiLib/DeviceManagerUiLib.inf b/MdeModulePkg/Library/DeviceManagerUiLib/DeviceManagerUiLib.inf
+index d7f833d..c210472 100644
+--- a/MdeModulePkg/Library/DeviceManagerUiLib/DeviceManagerUiLib.inf
++++ b/MdeModulePkg/Library/DeviceManagerUiLib/DeviceManagerUiLib.inf
+@@ -41,7 +41,10 @@
+   PrintLib
+   HiiLib
+   UefiBootManagerLib
+-  UefiHiiServicesLib
++  UefiHiiServicesLib
++  UefiLib
++  UefiRuntimeServicesTableLib
++  TimerLib
+ 
+ [Guids]
+   gEfiHiiPlatformSetupFormsetGuid               ## CONSUMES ## GUID (Indicate the formset class guid to be displayed)
+diff --git a/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c b/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c
+index d5b8433..283bc0d 100644
+--- a/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c
++++ b/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c
+@@ -8,7 +8,11 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ 
+ **/
+ 
+-#include "InternalBm.h"
++#include "InternalBm.h"
++#include <Library/G41SetupTrace.h>
++#ifdef G41_NATIVE_CSM
++#include <Library/G41CsmPolicy.h>
++#endif
+ 
+ EFI_RAM_DISK_PROTOCOL  *mRamDisk = NULL;
+ 
+@@ -1964,10 +1968,17 @@ EfiBootManagerBoot (
+     return;
+   }
+ 
+-  if ((BootOption->FilePath == NULL) || (BootOption->OptionType != LoadOptionTypeBoot)) {
++  if ((BootOption->FilePath == NULL) || (BootOption->OptionType != LoadOptionTypeBoot)) {
+     BootOption->Status = EFI_INVALID_PARAMETER;
+-    return;
+-  }
++    return;
++  }
++#ifdef G41_NATIVE_CSM
++  if (!G41CsmBootAllowed (BootOption->FilePath, BootOption->Attributes)) {
++    BootOption->Status = EFI_UNSUPPORTED;
++    DEBUG ((DEBUG_INFO, "G41 CSM: boot option blocked by active UEFI/Legacy policy\n"));
++    return;
++  }
++#endif
+ 
+   //
+   // 1. Create Boot#### for a temporary boot if there is no match Boot#### (i.e. a boot by selected a EFI Shell using "Boot From File")
+@@ -2049,22 +2060,27 @@ EfiBootManagerBoot (
+   ImageHandle       = NULL;
+   RamDiskDevicePath = NULL;
+   if (DevicePathType (BootOption->FilePath) != BBS_DEVICE_PATH) {
+-    Status   = EFI_NOT_FOUND;
+-    FilePath = NULL;
+-    EfiBootManagerConnectDevicePath (BootOption->FilePath, NULL);
+-    FileBuffer = BmGetNextLoadOptionBuffer (LoadOptionTypeBoot, BootOption->FilePath, &FilePath, &FileSize);
++    Status   = EFI_NOT_FOUND;
++    FilePath = NULL;
++    G41SetupTrace (L"L01 connecting selected boot-option device path");
++    EfiBootManagerConnectDevicePath (BootOption->FilePath, NULL);
++    G41SetupTrace (L"L02 reading selected image from FV or device");
++    FileBuffer = BmGetNextLoadOptionBuffer (LoadOptionTypeBoot, BootOption->FilePath, &FilePath, &FileSize);
++    G41SetupTrace (L"L03 image buffer ready");
+     if (FileBuffer != NULL) {
+       RamDiskDevicePath = BmGetRamDiskDevicePath (FilePath);
+ 
+-      REPORT_STATUS_CODE (EFI_PROGRESS_CODE, PcdGet32 (PcdProgressCodeOsLoaderLoad));
+-      Status = gBS->LoadImage (
++      REPORT_STATUS_CODE (EFI_PROGRESS_CODE, PcdGet32 (PcdProgressCodeOsLoaderLoad));
++      G41SetupTrace (L"L04 LoadImage: relocation and constructors");
++      Status = gBS->LoadImage (
+                       TRUE,
+                       gImageHandle,
+                       FilePath,
+                       FileBuffer,
+                       FileSize,
+-                      &ImageHandle
+-                      );
++                      &ImageHandle
++                      );
++      G41SetupTrace (L"L05 LoadImage returned");
+     }
+ 
+     if (FileBuffer != NULL) {
+@@ -2201,7 +2217,9 @@ EfiBootManagerBoot (
+ 
+   REPORT_STATUS_CODE (EFI_PROGRESS_CODE, PcdGet32 (PcdProgressCodeOsLoaderStart));
+ 
+-  Status = gBS->StartImage (ImageHandle, &BootOption->ExitDataSize, &BootOption->ExitData);
++  G41SetupTrace (L"L06 StartImage: entering selected application");
++  Status = gBS->StartImage (ImageHandle, &BootOption->ExitDataSize, &BootOption->ExitData);
++  G41SetupTrace (L"L07 selected application returned");
+   DEBUG ((DEBUG_INFO | DEBUG_LOAD, "Image Return Status = %r\n", Status));
+   BootOption->Status = Status;
+ 
+diff --git a/MdeModulePkg/Library/UefiBootManagerLib/UefiBootManagerLib.inf b/MdeModulePkg/Library/UefiBootManagerLib/UefiBootManagerLib.inf
+index 447fda7..36961d2 100644
+--- a/MdeModulePkg/Library/UefiBootManagerLib/UefiBootManagerLib.inf
++++ b/MdeModulePkg/Library/UefiBootManagerLib/UefiBootManagerLib.inf
+@@ -42,7 +42,8 @@
+   MdePkg/MdePkg.dec
+   MdeModulePkg/MdeModulePkg.dec
+ 
+-[LibraryClasses]
++[LibraryClasses]
++  TimerLib
+   HobLib
+   PcdLib
+   BaseLib
+diff --git a/MdeModulePkg/Universal/BdsDxe/BdsDxe.inf b/MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
+index 971b271..6992e0a 100644
+--- a/MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
++++ b/MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
+@@ -38,7 +38,8 @@
+   MdePkg/MdePkg.dec
+   MdeModulePkg/MdeModulePkg.dec
+ 
+-[LibraryClasses]
++[LibraryClasses]
++  TimerLib
+   DevicePathLib
+   BaseLib
+   MemoryAllocationLib
+diff --git a/MdeModulePkg/Universal/BdsDxe/BdsEntry.c b/MdeModulePkg/Universal/BdsDxe/BdsEntry.c
+index 8c4064c..6b11613 100644
+--- a/MdeModulePkg/Universal/BdsDxe/BdsEntry.c
++++ b/MdeModulePkg/Universal/BdsDxe/BdsEntry.c
+@@ -12,7 +12,8 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ 
+ **/
+ 
+-#include "Bds.h"
++#include "Bds.h"
++#include <Library/G41SetupTrace.h>
+ #include "Language.h"
+ #include "HwErrRecSupport.h"
+ #include <Library/VariablePolicyHelperLib.h>
+@@ -712,7 +713,8 @@ BdsEntry (
+   //
+   PERF_CROSSMODULE_END ("DXE");
+   PERF_CROSSMODULE_BEGIN ("BDS");
+-  DEBUG ((DEBUG_INFO, "[Bds] Entry...\n"));
++  DEBUG ((DEBUG_INFO, "[Bds] Entry...\n"));
++  G41SetupTrace (L"B00 BDS entered; validating variables");
+ 
+   //
+   // Fill in FirmwareVendor and FirmwareRevision from PCDs
+@@ -901,8 +903,10 @@ BdsEntry (
+   // > Signal ReadyToLock event
+   // > Authentication action: 1. connect Auth devices; 2. Identify auto logon user.
+   //
+-  PERF_INMODULE_BEGIN ("PlatformBootManagerBeforeConsole");
+-  PlatformBootManagerBeforeConsole ();
++  PERF_INMODULE_BEGIN ("PlatformBootManagerBeforeConsole");
++  G41SetupTrace (L"B01 platform before-console hook");
++  PlatformBootManagerBeforeConsole ();
++  G41SetupTrace (L"B02 starting Setup hotkey service");
+   PERF_INMODULE_END ("PlatformBootManagerBeforeConsole");
+ 
+   //
+@@ -922,7 +926,8 @@ BdsEntry (
+   //
+   // Connect consoles
+   //
+-  PERF_INMODULE_BEGIN ("EfiBootManagerConnectAllDefaultConsoles");
++  PERF_INMODULE_BEGIN ("EfiBootManagerConnectAllDefaultConsoles");
++  G41SetupTrace (L"B03 connecting default consoles");
+   if (PcdGetBool (PcdConInConnectOnDemand)) {
+     EfiBootManagerConnectConsoleVariable (ConOut);
+     EfiBootManagerConnectConsoleVariable (ErrOut);
+@@ -933,7 +938,8 @@ BdsEntry (
+     EfiBootManagerConnectAllDefaultConsoles ();
+   }
+ 
+-  PERF_INMODULE_END ("EfiBootManagerConnectAllDefaultConsoles");
++  PERF_INMODULE_END ("EfiBootManagerConnectAllDefaultConsoles");
++  G41SetupTrace (L"B04 default consoles ready");
+ 
+   //
+   // Do the platform specific action after the console is ready
+@@ -946,8 +952,10 @@ BdsEntry (
+   // > Dispatch aditional option roms
+   // > Special boot: e.g.: USB boot, enter UI
+   //
+-  PERF_INMODULE_BEGIN ("PlatformBootManagerAfterConsole");
+-  PlatformBootManagerAfterConsole ();
++  PERF_INMODULE_BEGIN ("PlatformBootManagerAfterConsole");
++  G41SetupTrace (L"B05 platform after-console hook");
++  PlatformBootManagerAfterConsole ();
++  G41SetupTrace (L"B06 platform after-console hook returned");
+   PERF_INMODULE_END ("PlatformBootManagerAfterConsole");
+ 
+   //
+@@ -1008,7 +1016,9 @@ BdsEntry (
+   //
+   // BootManagerMenu doesn't contain the correct information when return status is EFI_NOT_FOUND.
+   //
+-  BootManagerMenuStatus = EfiBootManagerGetBootManagerMenu (&BootManagerMenu);
++  G41SetupTrace (L"B07 resolving firmware Setup load option");
++  BootManagerMenuStatus = EfiBootManagerGetBootManagerMenu (&BootManagerMenu);
++  G41SetupTrace (L"B08 firmware Setup load option resolved");
+ 
+   BootFwUi         = (BOOLEAN)((OsIndication & EFI_OS_INDICATIONS_BOOT_TO_FW_UI) != 0);
+   PlatformRecovery = (BOOLEAN)((OsIndication & EFI_OS_INDICATIONS_START_PLATFORM_RECOVERY) != 0);
+@@ -1060,15 +1070,18 @@ BdsEntry (
+     //
+     // Execute Key####
+     //
+-    PERF_INMODULE_BEGIN ("BdsWait");
+-    BdsWait (HotkeyTriggered);
++    PERF_INMODULE_BEGIN ("BdsWait");
++    G41SetupTrace (L"B09 waiting for Setup hotkey");
++    BdsWait (HotkeyTriggered);
+     PERF_INMODULE_END ("BdsWait");
+     //
+     // BdsReadKeys() can be removed after all keyboard drivers invoke callback in timer callback.
+     //
+     BdsReadKeys ();
+ 
+-    EfiBootManagerHotkeyBoot ();
++    G41SetupTrace (L"B10 launching requested hotkey option");
++    EfiBootManagerHotkeyBoot ();
++    G41SetupTrace (L"B11 hotkey option returned");
+ 
+     if (BootNext != NULL) {
+       //
+@@ -1125,20 +1138,22 @@ BdsEntry (
+     EfiBootManagerFreeLoadOption (&BootManagerMenu);
+   }
+ 
+-  if (!BootSuccess) {
++  if (!BootSuccess) {
++#ifndef G41MXE_FAST_SETUP
+     if (PcdGetBool (PcdPlatformRecoverySupport)) {
+       LoadOptions = EfiBootManagerGetLoadOptions (&LoadOptionCount, LoadOptionTypePlatformRecovery);
+       if (LoadOptions != NULL) {
+         ProcessLoadOptions (LoadOptions, LoadOptionCount);
+         EfiBootManagerFreeLoadOptions (LoadOptions, LoadOptionCount);
+       }
+-    } else if (PlatformDefaultBootOptionValid) {
++    } else if (PlatformDefaultBootOptionValid) {
+       //
+       // When platform recovery is not enabled, still boot to platform default file path.
+       //
+-      PlatformDefaultBootOptionValid = EfiBootManagerProcessLoadOption (&PlatformDefaultBootOption) == EFI_SUCCESS;
+-    }
+-  }
++      PlatformDefaultBootOptionValid = EfiBootManagerProcessLoadOption (&PlatformDefaultBootOption) == EFI_SUCCESS;
++    }
++#endif
++  }
+ 
+   if (PlatformDefaultBootOptionValid) {
+     EfiBootManagerFreeLoadOption (&PlatformDefaultBootOption);
+diff --git a/PcAtChipsetPkg/PcAtChipsetPkg.dec b/PcAtChipsetPkg/PcAtChipsetPkg.dec
+index 8026fcd..cd02737 100644
+--- a/PcAtChipsetPkg/PcAtChipsetPkg.dec
++++ b/PcAtChipsetPkg/PcAtChipsetPkg.dec
+@@ -49,7 +49,9 @@
+   # @Prompt RTC port registers use MMIO.
+   gPcAtChipsetPkgTokenSpaceGuid.PcdRtcUseMmio|FALSE|BOOLEAN|0x00000021
+ 
+-[PcdsFixedAtBuild, PcdsDynamic, PcdsDynamicEx, PcdsPatchableInModule]
++[PcdsFixedAtBuild, PcdsDynamic, PcdsDynamicEx, PcdsPatchableInModule]
++  gPcAtChipsetPkgTokenSpaceGuid.Pcd8259LegacyModeMask|0xFFFF|UINT16|0x00000001
++  gPcAtChipsetPkgTokenSpaceGuid.Pcd8259LegacyModeEdgeLevel|0x0000|UINT16|0x00000002
+   ## This PCD specifies the base address of the HPET timer.
+   # @Prompt HPET base address.
+   gPcAtChipsetPkgTokenSpaceGuid.PcdHpetBaseAddress|0xFED00000|UINT32|0x00000009
+diff --git a/UefiPayloadPkg/Library/PlatformBootManagerLib/PlatformBootManager.c b/UefiPayloadPkg/Library/PlatformBootManagerLib/PlatformBootManager.c
+index b235733..cc4e7c7 100644
+--- a/UefiPayloadPkg/Library/PlatformBootManagerLib/PlatformBootManager.c
++++ b/UefiPayloadPkg/Library/PlatformBootManagerLib/PlatformBootManager.c
+@@ -9,7 +9,11 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ 
+ #include "PlatformBootManager.h"
+ #include "PlatformConsole.h"
+-#include <Protocol/FirmwareVolume2.h>
++#include <Protocol/FirmwareVolume2.h>
++#ifdef G41_NATIVE_CSM
++#include <Library/G41CsmPolicy.h>
++VOID EFIAPI LegacyBmRefreshAllBootOption (VOID);
++#endif
+ 
+ /**
+   Signal EndOfDxe event and install SMM Ready to lock protocol.
+@@ -213,7 +217,34 @@ PlatformRegisterFvBootOption (
+   if (!EFI_ERROR (Status)) {
+     BootOptions = EfiBootManagerGetLoadOptions (&BootOptionCount, LoadOptionTypeBoot);
+ 
+-    OptionIndex = PlatformFindLoadOption (&NewOption, BootOptions, BootOptionCount);
++    OptionIndex = PlatformFindLoadOption (&NewOption, BootOptions, BootOptionCount);
++
++#ifdef G41MXE_FAST_SETUP
++    // Upgrade previously registered firmware tools in place. Category APP keeps
++    // them selectable through BootNext/the menu without treating them as an OS.
++    // Match the complete device path, not a user-editable description.
++    if ((Attributes & LOAD_OPTION_CATEGORY) == LOAD_OPTION_CATEGORY_APP) {
++      for (OptionIndex = 0; OptionIndex < BootOptionCount; OptionIndex++) {
++        if ((GetDevicePathSize (BootOptions[OptionIndex].FilePath) ==
++             GetDevicePathSize (NewOption.FilePath)) &&
++            (CompareMem (BootOptions[OptionIndex].FilePath, NewOption.FilePath,
++                         GetDevicePathSize (NewOption.FilePath)) == 0)) {
++          if ((BootOptions[OptionIndex].Attributes & LOAD_OPTION_CATEGORY) !=
++              LOAD_OPTION_CATEGORY_APP) {
++            BootOptions[OptionIndex].Attributes =
++              (BootOptions[OptionIndex].Attributes & ~LOAD_OPTION_CATEGORY) |
++              LOAD_OPTION_CATEGORY_APP;
++            Status = EfiBootManagerLoadOptionToVariable (&BootOptions[OptionIndex]);
++            DEBUG ((DEBUG_INFO, "G41 boot: firmware tool category migration: %r\n", Status));
++          }
++          break;
++        }
++      }
++      if (OptionIndex == BootOptionCount) {
++        OptionIndex = (UINTN)-1;
++      }
++    }
++#endif
+ 
+     if (OptionIndex == -1) {
+       Status = EfiBootManagerAddLoadOptionVariable (&NewOption, (UINTN)-1);
+@@ -462,30 +493,51 @@ PlatformBootManagerBeforeConsole (
+ **/
+ VOID
+ EFIAPI
+-PlatformBootManagerAfterConsole (
++PlatformBootManagerAfterConsole (
+   VOID
+   )
+ {
+-  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Black;
+-  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  White;
+-  EFI_STATUS                     Status;
++  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Black;
++  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  White;
++  EFI_STATUS                     Status;
++#ifdef G41_CSM_TEST
++  EFI_GUID CsmTestGuid = {0x6e2f4063, 0xd7a4, 0x4b2d, {0xa6, 0xc6, 0x99, 0x5d, 0x8a, 0xb1, 0x83, 0x72}};
++#endif
+ 
+   Black.Blue = Black.Green = Black.Red = Black.Reserved = 0;
+   White.Blue = White.Green = White.Red = White.Reserved = 0xFF;
+ 
+-  //
+-  // Custom splash needs filesystems connected first. Default (or disabled)
+-  // can draw immediately so ConnectAll console churn does not precede the logo.
+-  //
+-  if (BootSplashRequiresConnect ()) {
+-    EfiBootManagerConnectAll ();
+-    EfiBootManagerRefreshAllBootOption ();
++  //
++  // The G41MXE setup path keeps device discovery lazy.  A full ConnectAll()
++  // walks every legacy PCI, IDE and USB controller and can spend tens of
++  // seconds in driver timeouts even when no removable media is attached.
++  // BdsEntry has already connected the default consoles before calling this
++  // hook. Existing Boot#### device paths are connected on demand by BDS; the
++  // fixed firmware-volume Shell and iPXE entries do not require a global scan.
++  //
++#ifdef G41MXE_FAST_SETUP
++  BootSplashApply ();
++#if defined (G41_NATIVE_CSM) && !defined (G41_CSM_TEST)
++  // Native legacy discovery is opt-in. Keep the proven lazy UEFI-only path.
++  if ((G41CsmActivePolicy () & 1) != 0 && (G41CsmActivePolicy () >> 8) != 1) {
++    LegacyBmRefreshAllBootOption ();
++  }
++#endif
++#else
++  //
++  // Custom splash needs filesystems connected first. Default (or disabled)
++  // can draw immediately so ConnectAll console churn does not precede the logo.
++  //
++  if (BootSplashRequiresConnect ()) {
++    EfiBootManagerConnectAll ();
++    EfiBootManagerRefreshAllBootOption ();
+     BootSplashApply ();
+   } else {
+     BootSplashApply ();
+-    EfiBootManagerConnectAll ();
+-    EfiBootManagerRefreshAllBootOption ();
+-  }
++    EfiBootManagerConnectAll ();
++    EfiBootManagerRefreshAllBootOption ();
++  }
++#endif
+ 
+   //
+   // Active BOOT_ON_FLASH_UPDATE mode means that at least one capsule has been
+@@ -523,9 +575,16 @@ PlatformBootManagerAfterConsole (
+   }
+ 
+   //
+-  // Register UEFI Shell
+-  //
+-  PlatformRegisterFvBootOption (&gUefiShellFileGuid, L"UEFI Shell", LOAD_OPTION_ACTIVE);
++  // Register UEFI Shell
++  //
++#ifdef G41_CSM_TEST
++  PlatformRegisterFvBootOption (&CsmTestGuid, L"Native CSM regression", LOAD_OPTION_ACTIVE);
++#endif
++  PlatformRegisterFvBootOption (&gUefiShellFileGuid, L"UEFI Shell", LOAD_OPTION_ACTIVE
++#ifdef G41MXE_FAST_SETUP
++                               | LOAD_OPTION_CATEGORY_APP
++#endif
++                               );
+ 
+   //
+   // Register iPXE if the binary is present in the firmware volume.
+@@ -534,7 +593,10 @@ PlatformBootManagerAfterConsole (
+     PlatformRegisterFvBootOption (
+       (EFI_GUID *)PcdGetPtr (PcdiPXEFile),
+       (CHAR16 *)PcdGetPtr (PcdiPXEOptionName),
+-      LOAD_OPTION_ACTIVE
++      LOAD_OPTION_ACTIVE
++#ifdef G41MXE_FAST_SETUP
++      | LOAD_OPTION_CATEGORY_APP
++#endif
+       );
+   }
+ 
+@@ -605,9 +667,38 @@ PlatformBootManagerWaitCallback (
+ **/
+ VOID
+ EFIAPI
+-PlatformBootManagerUnableToBoot (
++PlatformBootManagerUnableToBoot (
+   VOID
+   )
+-{
+-  return;
+-}
++{
++#ifdef G41MXE_FAST_SETUP
++  EFI_BOOT_MANAGER_LOAD_OPTION  Menu;
++  EFI_BOOT_MANAGER_LOAD_OPTION  *Options;
++  UINTN                         Count;
++  UINTN                         Index;
++  EFI_STATUS                    Status;
++
++  Status = EfiBootManagerGetBootManagerMenu (&Menu);
++  if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR, "G41 boot: setup fallback unavailable: %r\n", Status));
++    return;
++  }
++
++  // A failed/missing OS entry falls straight into the ASUS SendForm path.
++  // No ConnectAll/RefreshBootOptions here: the saved device path connects only
++  // its own controller. Leaving Setup retries any order the user just saved.
++  for (;;) {
++    DEBUG ((DEBUG_INFO, "G41 boot: no usable default UEFI entry; entering ASUS Setup\n"));
++    EfiBootManagerBoot (&Menu);
++    Options = EfiBootManagerGetLoadOptions (&Count, LoadOptionTypeBoot);
++    for (Index = 0; Index < Count; Index++) {
++      if (((Options[Index].Attributes & LOAD_OPTION_ACTIVE) != 0) &&
++          ((Options[Index].Attributes & LOAD_OPTION_CATEGORY) == LOAD_OPTION_CATEGORY_BOOT)) {
++        EfiBootManagerBoot (&Options[Index]);
++      }
++    }
++    EfiBootManagerFreeLoadOptions (Options, Count);
++  }
++#endif
++  return;
++}
+diff --git a/UefiPayloadPkg/UefiPayloadEntry/UefiPayloadEntry.c b/UefiPayloadPkg/UefiPayloadEntry/UefiPayloadEntry.c
+index 83b5502..f524811 100644
+--- a/UefiPayloadPkg/UefiPayloadEntry/UefiPayloadEntry.c
++++ b/UefiPayloadPkg/UefiPayloadEntry/UefiPayloadEntry.c
+@@ -510,7 +510,12 @@ BuildGenericHob (
+   EFI_RESOURCE_ATTRIBUTE_TYPE  ResourceAttribute;
+ 
+   // The UEFI payload FV
+-  BuildMemoryAllocationHob (PcdGet32 (PcdPayloadFdMemBase), PcdGet32 (PcdPayloadFdMemSize), EfiBootServicesData);
++  BuildMemoryAllocationHob (PcdGet32 (PcdPayloadFdMemBase), PcdGet32 (PcdPayloadFdMemSize), EfiBootServicesData);
++#ifdef G41_NATIVE_CSM
++  // Modern DXE refuses AllocatePages at address zero. Reserve the IVT/BDA
++  // explicitly before DXE; CSM accesses its owned page via ACCESS_PAGE0_CODE.
++  BuildMemoryAllocationHob (0, EFI_PAGE_SIZE, EfiReservedMemoryType);
++#endif
+ 
+   PhysicalAddressBits = ArchGetPhysicalAddressBits ();
+   BuildCpuHob (PhysicalAddressBits, 16);
+diff --git a/UefiPayloadPkg/UefiPayloadPkg.dsc b/UefiPayloadPkg/UefiPayloadPkg.dsc
+index 943e3c9..2d4f9e6 100644
+--- a/UefiPayloadPkg/UefiPayloadPkg.dsc
++++ b/UefiPayloadPkg/UefiPayloadPkg.dsc
+@@ -27,7 +27,18 @@
+   SKUID_IDENTIFIER                    = DEFAULT
+   BUILD_ARCH                          = Legacy
+   OUTPUT_DIRECTORY                    = Build/UefiPayloadPkg$(BUILD_ARCH)
+-  FLASH_DEFINITION                    = UefiPayloadPkg/UefiPayloadPkg.fdf
++  FLASH_DEFINITION                    = UefiPayloadPkg/UefiPayloadPkg.fdf
++  DEFINE ASUS_AMITSE_LAB              = FALSE
++  DEFINE ASUS_SETUP_PAGE_LAB          = FALSE
++  DEFINE ASUS_SETUP_HII_DATA_ONLY     = FALSE
++  DEFINE G41MXE_FAST_SETUP            = FALSE
++  DEFINE G41MXE_SETUP_TRACE           = FALSE
++  DEFINE G41_NATIVE_CSM               = FALSE
++  DEFINE G41_CSM_TEST                 = FALSE
++  DEFINE G41_VBIOS_BINARY             = UefiPayloadPkg/G41CsmSupportDxe/G41Vbios.rom
++  DEFINE CSM16_BINARY                 = UefiPayloadPkg/G41CsmSupportDxe/Csm16.bin
++  DEFINE ASUS_SETUP_BINARY            = UefiPayloadPkg/AsusAmitseBinary/Setup.efi
++  DEFINE ASUS_AMITSE_BINARY           = UefiPayloadPkg/AsusAmitseBinary/AMITSE.efi
+   PCD_DYNAMIC_AS_DYNAMICEX            = TRUE
+ 
+   DEFINE SOURCE_DEBUG_ENABLE          = FALSE
+@@ -231,8 +242,23 @@
+   DEFINE TPM2_ENABLE                    = TRUE
+   DEFINE TPM1_ENABLE                    = TRUE
+ 
+-[BuildOptions]
+-  *_*_*_CC_FLAGS                 = -D DISABLE_NEW_DEPRECATED_INTERFACES
++[BuildOptions]
++!if $(G41_NATIVE_CSM) == TRUE
++  *_*_*_CC_FLAGS                 = -DG41_NATIVE_CSM
++!if $(G41_CSM_TEST) == TRUE
++  *_*_*_CC_FLAGS                 = -DG41_CSM_TEST
++!endif
++!endif
++!if $(G41_CSM_TEST) == TRUE
++  *_*_*_CC_FLAGS                 = -DG41_CSM_TEST
++!endif
++  *_*_*_CC_FLAGS                 = -D DISABLE_NEW_DEPRECATED_INTERFACES
++!if $(G41MXE_FAST_SETUP) == TRUE
++  *_*_*_CC_FLAGS                 = -DG41MXE_FAST_SETUP
++!endif
++!if $(G41MXE_SETUP_TRACE) == TRUE
++  *_*_*_CC_FLAGS                 = -DG41MXE_SETUP_TRACE
++!endif
+ !if $(USE_CBMEM_FOR_CONSOLE) == FALSE
+   GCC:RELEASE_*_*_CC_FLAGS       = -DMDEPKG_NDEBUG
+   INTEL:RELEASE_*_*_CC_FLAGS     = /D MDEPKG_NDEBUG
+@@ -1218,18 +1244,55 @@
+   UefiPayloadPkg/EnrollDefaultKeys/EnrollDefaultKeys.inf
+ !endif
+ 
+-  MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
+-!if $(BOOTSPLASH_IMAGE)
+-  MdeModulePkg/Logo/LogoDxe.inf
+-!endif
++!if $(G41_NATIVE_CSM) == TRUE
++  UefiPayloadPkg/G41CsmSupportDxe/G41CsmSupportDxe.inf
++  PcAtChipsetPkg/8259InterruptControllerDxe/8259.inf
++  IntelFrameworkModulePkg/Csm/LegacyBiosDxe/LegacyBiosDxe.inf
++  IntelFrameworkModulePkg/Csm/BiosThunk/VideoDxe/VideoDxe.inf
++!if $(G41_CSM_TEST) == TRUE
++  UefiPayloadPkg/G41CsmTest/G41CsmTest.inf {
++    <LibraryClasses>
++      NULL|IntelFrameworkModulePkg/Library/LegacyBootManagerLib/LegacyBootManagerLib.inf
++  }
++!endif
++  MdeModulePkg/Universal/BdsDxe/BdsDxe.inf {
++!if $(G41_CSM_TEST) == TRUE
++    <BuildOptions>
++      GCC:*_*_*_CC_FLAGS = -DG41_CSM_TEST
++!endif
++    <LibraryClasses>
++      NULL|IntelFrameworkModulePkg/Library/LegacyBootManagerLib/LegacyBootManagerLib.inf
++  }
++!else
++  MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
++!endif
++!if $(BOOTSPLASH_IMAGE)
++!if $(G41MXE_FAST_SETUP) == TRUE
++  MdeModulePkg/Logo/G41LogoDxe.inf
++!else
++  MdeModulePkg/Logo/LogoDxe.inf
++!endif
++!endif
+   UefiPayloadPkg/CfrSetupMenuDxe/CfrSetupMenuDxe.inf
+-  MdeModulePkg/Application/UiApp/UiApp.inf {
+-    <LibraryClasses>
+-      NULL|MdeModulePkg/Library/BootManagerUiLib/BootManagerUiLib.inf
++  MdeModulePkg/Application/UiApp/UiApp.inf {
++!if $(ASUS_SETUP_PAGE_LAB) == TRUE
++    <BuildOptions>
++      GCC:*_*_*_CC_FLAGS = -DASUS_SETUP_PAGE_LAB
++!endif
++    <LibraryClasses>
++      NULL|MdeModulePkg/Library/BootManagerUiLib/BootManagerUiLib.inf
+       NULL|MdeModulePkg/Library/BootMaintenanceManagerUiLib/BootMaintenanceManagerUiLib.inf
+-      NULL|MdeModulePkg/Library/DeviceManagerUiLib/DeviceManagerUiLib.inf
++      NULL|MdeModulePkg/Library/DeviceManagerUiLib/DeviceManagerUiLib.inf
++!if $(G41_NATIVE_CSM) == TRUE
++      NULL|IntelFrameworkModulePkg/Library/LegacyBootManagerLib/LegacyBootManagerLib.inf
++!endif
+   }
+-  MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf
++  MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf {
++!if $(G41_NATIVE_CSM) == TRUE
++    <LibraryClasses>
++      NULL|IntelFrameworkModulePkg/Library/LegacyBootManagerLib/LegacyBootManagerLib.inf
++!endif
++  }
+ !if $(CAPSULE_SUPPORT) == TRUE
+ !if "$(CAPSULE_MAIN_FW_GUID)" == ""
+   !error "CAPSULE_MAIN_FW_GUID must be set when CAPSULE_SUPPORT is TRUE"
+@@ -1276,10 +1339,14 @@
+   #
+   # Following are the DXE drivers
+   #
+-  MdeModulePkg/Universal/PCD/Dxe/Pcd.inf {
+-    <LibraryClasses>
+-      PcdLib|MdePkg/Library/BasePcdLibNull/BasePcdLibNull.inf
+-  }
++  MdeModulePkg/Universal/PCD/Dxe/Pcd.inf {
++!if $(ASUS_SETUP_PAGE_LAB) == TRUE
++    <BuildOptions>
++      GCC:*_*_*_CC_FLAGS = -DASUS_SETUP_PAGE_LAB
++!endif
++    <LibraryClasses>
++      PcdLib|MdePkg/Library/BasePcdLibNull/BasePcdLibNull.inf
++  }
+ 
+   MdeModulePkg/Universal/ReportStatusCodeRouter/RuntimeDxe/ReportStatusCodeRouterRuntimeDxe.inf
+   MdeModulePkg/Universal/StatusCodeHandler/RuntimeDxe/StatusCodeHandlerRuntimeDxe.inf
+@@ -1290,8 +1357,14 @@
+ !elseif $(MEMORY_TEST) == "NULL"
+   MdeModulePkg/Universal/MemoryTest/NullMemoryTestDxe/NullMemoryTestDxe.inf
+ !endif
+-  MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
+-  MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf
++  MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
++!if $(ASUS_SETUP_PAGE_LAB) == TRUE
++  UefiPayloadPkg/AsusAmiCompatDxe/AsusAmiCompatDxe.inf
++!if $(ASUS_SETUP_HII_DATA_ONLY) == TRUE
++  UefiPayloadPkg/AsusSetupHiiDxe/AsusSetupHiiDxe.inf
++!endif
++!endif
++  MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf
+ !if $(LVGL_ENABLE) == TRUE
+   LvglPkg/LvglDisplayEngineDxe/LvglDisplayEngineDxe.inf
+   LvglPkg/LvglSetupDxe/LvglSetupDxe.inf
+@@ -1449,8 +1522,13 @@
+ !endif
+ !endif
+ 
+-!if $(VARIABLE_SUPPORT) == "EMU"
+-  MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
++!if $(VARIABLE_SUPPORT) == "EMU"
++  MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf {
++!if $(ASUS_SETUP_PAGE_LAB) == TRUE
++    <BuildOptions>
++      GCC:*_*_*_CC_FLAGS = -DASUS_SETUP_PAGE_LAB
++!endif
++  }
+ !elseif $(VARIABLE_SUPPORT) == "SMMSTORE"
+   UefiPayloadPkg/SmmStoreFvb/SmmStoreFvbRuntimeDxe.inf
+   MdeModulePkg/Universal/FaultTolerantWriteDxe/FaultTolerantWriteDxe.inf
+diff --git a/UefiPayloadPkg/UefiPayloadPkg.fdf b/UefiPayloadPkg/UefiPayloadPkg.fdf
+index 3577a4d..6f79ddc 100644
+--- a/UefiPayloadPkg/UefiPayloadPkg.fdf
++++ b/UefiPayloadPkg/UefiPayloadPkg.fdf
+@@ -13,7 +13,17 @@
+ DEFINE FD_BASE       = 0x00800000
+ DEFINE FD_BLOCK_SIZE = 0x00001000
+ 
+-!if $(TARGET) == "NOOPT"
++!if $(ASUS_SETUP_PAGE_LAB) == TRUE
++# The unmodified vendor renderer plus its resource archive exceed 12 MiB.
++!if $(TARGET) == DEBUG || $(USE_CBMEM_FOR_CONSOLE) == TRUE
++DEFINE FD_SIZE     = 0x01400000
++DEFINE NUM_BLOCKS  = 0x1400
++!else
++DEFINE FD_SIZE     = 0x00D00000
++DEFINE NUM_BLOCKS  = 0xD00
++!endif
++!else
++!if $(TARGET) == "NOOPT"
+ DEFINE FD_SIZE     = 0x00850000
+ DEFINE NUM_BLOCKS  = 0x850
+ !else
+@@ -22,9 +32,10 @@ DEFINE FD_SIZE     = 0x0B00000
+ DEFINE NUM_BLOCKS  = 0xB00
+ !else
+ DEFINE FD_SIZE     = 0x0A00000
+-DEFINE NUM_BLOCKS  = 0xA00
+-!endif
+-!endif
++DEFINE NUM_BLOCKS  = 0xA00
++!endif
++!endif
++!endif
+ 
+ ################################################################################
+ [FD.UefiPayload]
+@@ -159,9 +170,24 @@ APRIORI DXE {
+ }
+ 
+ #
+-# DXE Phase modules
+-#
+-INF MdeModulePkg/Core/Dxe/DxeMain.inf
++# DXE Phase modules
++#
++!if $(G41_NATIVE_CSM) == TRUE
++INF UefiPayloadPkg/G41CsmSupportDxe/G41CsmSupportDxe.inf
++INF PcAtChipsetPkg/8259InterruptControllerDxe/8259.inf
++INF IntelFrameworkModulePkg/Csm/LegacyBiosDxe/LegacyBiosDxe.inf
++INF IntelFrameworkModulePkg/Csm/BiosThunk/VideoDxe/VideoDxe.inf
++!if $(G41_CSM_TEST) == TRUE
++INF UefiPayloadPkg/G41CsmTest/G41CsmTest.inf
++!endif
++FILE FREEFORM = 1547B4F3-3E8A-4FEF-81C8-328ED647AB1A {
++  SECTION RAW = $(CSM16_BINARY)
++}
++FILE FREEFORM = 8d1ff5c2-2bc2-4c90-8f7f-ec395df3a649 {
++  SECTION RAW = $(G41_VBIOS_BINARY)
++}
++!endif
++INF MdeModulePkg/Core/Dxe/DxeMain.inf
+ INF MdeModulePkg/Universal/PCD/Dxe/Pcd.inf
+ INF MdeModulePkg/Universal/ReportStatusCodeRouter/RuntimeDxe/ReportStatusCodeRouterRuntimeDxe.inf
+ INF MdeModulePkg/Universal/StatusCodeHandler/RuntimeDxe/StatusCodeHandlerRuntimeDxe.inf
+@@ -305,18 +331,111 @@ INF  MdeModulePkg/Universal/MemoryTest/GenericMemoryTestDxe/GenericMemoryTestDxe
+ !elseif $(MEMORY_TEST) == "NULL"
+ INF  MdeModulePkg/Universal/MemoryTest/NullMemoryTestDxe/NullMemoryTestDxe.inf
+ !endif
+-INF MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
+-INF MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf
++INF MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
++!if $(ASUS_AMITSE_LAB) == TRUE
++# Research-only import of the ASUS/AMI setup browser.  Keep it isolated behind
++# an explicit build define: these proprietary binaries are not part of normal
++# UefiPayloadPkg images and are never used by the G41MXE production build.
++!if $(ASUS_SETUP_PAGE_LAB) == TRUE
++INF UefiPayloadPkg/AsusAmiCompatDxe/AsusAmiCompatDxe.inf
++!if $(ASUS_SETUP_HII_DATA_ONLY) == TRUE
++# Parse only the donor's HII resource.  The donor PE image is deliberately a
++# non-dispatchable RAW section in a FREEFORM FFS file, and the safe driver
++# registers it with DriverHandle=NULL so no vendor callback can run.
++INF UefiPayloadPkg/AsusSetupHiiDxe/AsusSetupHiiDxe.inf
++FILE FREEFORM = 6F7C8B8F-0F64-4BAA-95EE-06F749D73E9B {
++  SECTION RAW = $(ASUS_SETUP_BINARY)
++  SECTION UI = "ASUS Setup HII data only"
++}
++!else
++# G41 HWM is supplied by AsusAmiCompatDxe; do not dispatch Z490 sensor I/O.
++# Setup requires the AMI/ASUS DXE CMOS access protocol
++# (9851740C-22E0-440D-9090-EF2D71C251C9).  Import the matching vendor
++# CmosDxe provider instead of emulating its interface in the page-capture lab.
++FILE DRIVER = 3237418A-478C-4700-B59F-768E2CCBC726 {
++  SECTION DXE_DEPEX_EXP = {TRUE}
++  SECTION PE32 = UefiPayloadPkg/AsusAmitseBinary/CmosDxe.efi
++  SECTION UI = "ASUS CmosDxe (lab)"
++}
++!endif
++# AMITSE calls the ASUS resource-loader protocol
++# (DE97C321-8C29-4AA7-8543-18F4C3949A18) without checking LocateProtocol's
++# status.  Use the matching unmodified PRIME Z490-A provider so the QEMU-only
++# experiment follows the vendor rendering path and retains the original assets.
++FILE DRIVER = 5C0FB3B9-F7BB-467B-A4DC-89D7D5A58432 {
++  SECTION DXE_DEPEX_EXP = {TRUE}
++  SECTION PE32 = UefiPayloadPkg/AsusAmitseBinary/AsusResLoader.efi
++  SECTION UI = "ASUS Resource Loader (lab)"
++}
++# Original resource archive requested by AMITSE through AsusResLoader.
++FILE FREEFORM = CC5840D2-D8EA-459E-BAF4-349AC710EBBE {
++  SECTION RAW = UefiPayloadPkg/AsusAmitseBinary/AsusSetupResources.bin
++}
++# AMITSE uses the ASUS SPD-transfer protocol
++# (2B1A35EE-E799-40B4-A7BB-B3EA3535D1C7) while building the memory portion of
++# the setup UI.  The matching vendor module installs this interface from its
++# entry point.  Preserve the original implementation for the QEMU-only capture.
++FILE DRIVER = 7A54B36F-F745-462C-B11F-16E03E52B617 {
++  SECTION DXE_DEPEX_EXP = {TRUE}
++  SECTION PE32 = UefiPayloadPkg/AsusAmitseBinary/AsusSpdTransfer.efi
++  SECTION UI = "ASUS SPD Transfer (lab)"
++}
++# AMITSE's graphical setup path requires the matching vendor MouseDriver
++# protocol (C7A7030C-C3D8-45EE-BED9-5D9E76762953), even when no physical
++# pointing device is present.  Keep the original binary in this QEMU-only lab
++# path so the setup page uses ASUS's renderer instead of a reimplementation.
++FILE DRIVER = C7A7030C-C3D8-45EE-BED9-5D9E76762953 {
++  SECTION DXE_DEPEX_EXP = {TRUE}
++  SECTION PE32 = UefiPayloadPkg/AsusAmitseBinary/MouseDriver.efi
++  SECTION UI = "ASUS MouseDriver (lab)"
++}
++!endif
++FILE DRIVER = B1DA0ADF-4F77-4070-A88E-BFFE1C60529A {
++  SECTION DXE_DEPEX_EXP = {TRUE}
++  SECTION PE32 = $(ASUS_AMITSE_BINARY)
++  SECTION UI = "AMITSE"
++}
++FILE FREEFORM = FE612B72-203C-47B1-8560-A66D946EB371 {
++  SECTION SUBTYPE_GUID FE612B72-203C-47B1-8560-A66D946EB371 = UefiPayloadPkg/AsusAmitseBinary/AMITSESetupData.bin
++  SECTION UI = "AMITSESetupData"
++}
++!if $(ASUS_SETUP_PAGE_LAB) == TRUE
++!if $(ASUS_SETUP_HII_DATA_ONLY) == FALSE
++# Setup consumes the AMI SMBIOS compatibility protocol in addition to the
++# standard EFI_SMBIOS_PROTOCOL.  Import the matching unmodified vendor driver
++# before Setup so the QEMU-only page-capture experiment gets the exact protocol
++# implementation expected by this firmware generation.
++FILE DRIVER = B13EDD38-684C-41ED-A305-D7B7E32497DF {
++  SECTION DXE_DEPEX_EXP = {TRUE}
++  SECTION PE32 = UefiPayloadPkg/AsusAmitseBinary/Smbios.efi
++  SECTION UI = "ASUS Smbios (lab)"
++}
++# Register the unmodified ASUS HII form and string packages so AMITSE can be
++# tested with the form set it was built for.  Its original DEPEX requires the
++# complete AMI DXE stack, so the isolated QEMU experiment dispatches it
++# explicitly and captures the first missing runtime dependency instead.
++FILE DRIVER = 899407D7-99FE-43D8-9A21-79EC328CAC21 {
++  SECTION DXE_DEPEX_EXP = {TRUE}
++  SECTION PE32 = $(ASUS_SETUP_BINARY)
++  SECTION UI = "ASUS Setup (lab)"
++}
++!endif
++!endif
++!else
++INF MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf
++!endif
+ !if $(VARIABLE_SUPPORT) == "EMU" || $(VARIABLE_SUPPORT) == "SMMSTORE" || $(VARIABLE_SUPPORT) == "SPI"
+ INF UefiPayloadPkg/UserAuthPkg/UserAuthenticationDxe/UserAuthenticationDxe.inf
+ !if $(BOOTSPLASH_IMAGE)
+ INF UefiPayloadPkg/BootSplashConfigDxe/BootSplashConfigDxe.inf
+ !endif
+ !endif
+-!if $(LVGL_ENABLE) == TRUE
+-INF LvglPkg/LvglDisplayEngineDxe/LvglDisplayEngineDxe.inf
+-INF LvglPkg/LvglSetupDxe/LvglSetupDxe.inf
+-!else
++!if $(ASUS_AMITSE_LAB) == TRUE
++# AMITSE provides EFI_FORM_BROWSER2_PROTOCOL and renders directly to GOP.
++!elseif $(LVGL_ENABLE) == TRUE
++INF LvglPkg/LvglDisplayEngineDxe/LvglDisplayEngineDxe.inf
++INF LvglPkg/LvglSetupDxe/LvglSetupDxe.inf
++!else
+ INF MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf
+ !endif
+ INF MdeModulePkg/Universal/TimeDateSettingsDxe/TimeDateSettingsDxe.inf
+@@ -325,9 +444,13 @@ INF UefiPayloadPkg/BlSupportDxe/BlSupportDxe.inf
+ INF UefiPayloadPkg/EcAcpiBatteryStatusDxe/EcAcpiBatteryStatusDxe.inf
+ 
+ INF MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
+-!if $(BOOTSPLASH_IMAGE)
+-INF MdeModulePkg/Logo/LogoDxe.inf
+-!endif
++!if $(BOOTSPLASH_IMAGE)
++!if $(G41MXE_FAST_SETUP) == TRUE
++INF MdeModulePkg/Logo/G41LogoDxe.inf
++!else
++INF MdeModulePkg/Logo/LogoDxe.inf
++!endif
++!endif
+ 
+ #
+ # PCI Support

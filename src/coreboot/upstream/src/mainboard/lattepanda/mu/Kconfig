@@ -1,0 +1,120 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config BOARD_LATTEPANDA_MU_COMMON
+	def_bool n
+	select BOARD_ROMSIZE_KB_16384
+	select CRB_TPM
+	select DRIVERS_I2C_HID
+	select DRIVERS_INTEL_PMC
+	select DRIVERS_OPTION_CFR_ENABLED if PAYLOAD_EDK2 && SMMSTORE
+	select DRIVERS_SPI_ACPI
+	select DRIVERS_UART_8250IO
+	select DRIVERS_USB_ACPI
+	select FSP_TYPE_IOT
+	select HAVE_ACPI_RESUME
+	select HAVE_ACPI_TABLES
+	select HAVE_SPD_IN_CBFS
+	select HAVE_INTEL_PTT
+	select INTEL_GMA_HAVE_VBT
+	select MAINBOARD_HAS_TPM2
+	select PCIEXP_ASPM
+	select PCIEXP_CLK_PM
+	select PCIEXP_L1_SUB_STATE
+	select PMC_IPC_ACPI_INTERFACE
+	select SOC_INTEL_ALDERLAKE_PCH_N
+	select SUPERIO_ITE_IT8613E
+
+config BOARD_LATTEPANDA_MU
+	select BOARD_LATTEPANDA_MU_COMMON
+
+config BOARD_LATTEPANDA_MU_DFR1141
+	select BOARD_LATTEPANDA_MU_COMMON
+	select SOC_INTEL_COMMON_BLOCK_HDA_VERB
+
+config BOARD_LATTEPANDA_MU_DFR1142
+	select BOARD_LATTEPANDA_MU_COMMON
+	select REALTEK_8168_RESET
+	select RT8168_GEN_ACPI_POWER_RESOURCE
+
+if BOARD_LATTEPANDA_MU_COMMON
+
+config CBFS_SIZE
+	default 0xa00000
+
+config INTEL_GMA_VBT_FILE
+	default "src/mainboard/\$(MAINBOARDDIR)/data.vbt"
+
+config MAINBOARD_DIR
+	default "lattepanda/mu"
+
+config MAINBOARD_VENDOR
+	default "DFRobot"
+
+config MAINBOARD_PART_NUMBER
+	default "LattePanda Mu (SOM only)" if BOARD_LATTEPANDA_MU
+	default "LattePanda Mu with DFR1142" if BOARD_LATTEPANDA_MU_DFR1142
+	default "LattePanda Mu with DFR1141" if BOARD_LATTEPANDA_MU_DFR1141
+
+config VARIANT_DIR
+	default "dfr1141" if BOARD_LATTEPANDA_MU_DFR1141
+	default "dfr1142" if BOARD_LATTEPANDA_MU_DFR1142
+
+config DEVICETREE
+	default "variants/baseboard/devicetree.cb"
+
+config OVERRIDE_DEVICETREE
+	default "variants/\$(CONFIG_VARIANT_DIR)/overridetree.cb" if (!BOARD_LATTEPANDA_MU)
+
+config UART_FOR_CONSOLE
+	default 0
+
+choice
+	prompt "On-board LP5X memory size"
+	default BOARD_LATTEPANDA_MU_MEMORY_16GB
+	help
+	  Select the soldered memory density on your Mu module. The matching
+	  SPD image is included in CBFS at index 0.
+
+config BOARD_LATTEPANDA_MU_MEMORY_8GB
+	bool "8 GB"
+
+config BOARD_LATTEPANDA_MU_MEMORY_16GB
+	bool "16 GB"
+endchoice
+
+if BOARD_LATTEPANDA_MU_DFR1141
+
+choice
+	prompt "HSIO configuration (x4 slot mux)"
+	default DFR1141_HSIO_PCIE_X4
+	help
+	  On the DFR1141 carrier, HSIO10+11 are multiplexed with the x4 slot connector:
+
+	  - PCIe 3.0 x4: all four lanes to the slot.
+	    SATA is disabled in ramstage.
+	  - PCIe 3.0 x2 + SATA: HSIO10+11 to SATA, slot runs x2.
+
+	  This option only controls the ramstage/devicetree side of the mux. The
+	  actual lane routing is fixed by soft straps in the Intel Flash Descriptor,
+	  which cannot be changed at runtime. You MUST build with a matching
+	  IFD (set CONFIG_IFD_BIN_PATH to the descriptor extracted from the
+	  corresponding vendor stock firmware branch: PCIe/Default for x4,
+	  SATA for x2 + SATA). A mismatched descriptor leaves the slot and/or
+	  SATA port non-functional.
+
+config DFR1141_HSIO_PCIE_X4
+	bool "PCIe 3.0 x4"
+	help
+	  Route all four lanes to the x4 slot and disable SATA. Requires an IFD
+	  built from the vendor PCIe/Default (SR-B) firmware branch.
+
+config DFR1141_HSIO_PCIE_X2_SATA
+	bool "PCIe 3.0 x2 + SATA"
+	help
+	  Route HSIO10+11 to SATA; the slot runs x2. Requires an IFD built from
+	  the vendor SATA (SR-B-SATA) firmware branch.
+endchoice
+
+endif
+
+endif

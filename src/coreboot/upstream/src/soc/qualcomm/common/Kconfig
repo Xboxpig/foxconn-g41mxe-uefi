@@ -1,0 +1,195 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config SOC_QUALCOMM_COMMON
+	bool
+	default n
+	help
+	  Selected by platforms that use the common code.
+
+config QC_COMMON_QUPV3_2
+	bool
+	default n
+	help
+	  Selected by chipsets that has QUPv3 HW Version 2.
+
+config QMP_PHY_2X2_1X4
+	bool
+	default n
+	help
+	  Selected by chipsets that have PCIE QMP PHY 2X2/1X4
+
+config QMP_PHY_PCIE5_1X4
+	bool
+	default n
+	help
+	  Selected by chipsets that have the PCIe5 5x4 QMP PHY.
+	  This PHY uses a unified TXRXZ broadcast register (all 4 lanes),
+	  PCS_LANEZ broadcast, and has different PCS_COM control register
+	  offsets.
+
+if SOC_QUALCOMM_COMMON
+
+config QC_RAMDUMP
+	bool "Enable Qualcomm RAM dump"
+	default n
+	help
+	  Build-time toggle for Qualcomm RAM dump support.
+	  Controlled by the ChromeOS 'qualcomm_ramdump' USE flag.
+	  The possible options are (A) using SDI for SC7180 and SC7280
+	  (B) using RAMDUMP for X1P42100 and future generations.
+
+config QC_SDI_ENABLE
+	bool
+	default n
+	prompt "Debug Build: enable SDI"
+
+config QC_APDP_ENABLE
+	bool
+	default n
+	prompt "Debug Build: enable APDP"
+	help
+	  Application Processor Debug Policy (APDP) is a configuration image
+	  to define and enforce debugging capabilities and restrictions for APPS.
+
+config QC_RAMDUMP_ENABLE
+	bool
+	default n
+	prompt "Debug Build: enable Ramdump"
+	help
+	  Ramdump is a debug image that is loaded during a system crash to capture
+	  memory contents for post-crash analysis.
+
+config QC_SKIP_SOC_DEBUG_FEATURES_IN_RECOVERY
+	bool
+	default n
+	help
+	  Skip Qualcomm SoC debug features in the recovery mode.
+
+	  Select this option if the platform's recovery partition is not
+	  sufficient to store binaries required to support Qualcomm SoC
+	  debug features such as ramdump.
+
+config SOC_QUALCOMM_CDT
+	bool
+	default n
+	help
+	  When enabled, the CDT data from RW_CDT partition is passed to QcLib,
+	  which populates the platform information in SMEM. This information is
+	  later used by depthcharge to select the platform-specific DTBO.
+
+config SOC_QUALCOMM_QCLIB_SKIP_MMU_TOGGLE
+	bool
+	default n
+	help
+	  Avoid disabling and re-enabling the MMU during QCLib execution.
+
+	  Select this option if the platform's QCLib version supports running
+	  within the existing coreboot MMU configuration without modification.
+
+	  Enabling this reduces boot latency by eliminating redundant cache
+	  flushes and TLB invalidations associated with mmu_disable() and
+	  mmu_enable() calls.
+
+config SOC_QUALCOMM_DEBUG_TSENS
+	bool
+	default n
+	help
+	  When enabled, a call to monitor TSENS will dump the sensor data on
+	  the debug console.
+
+config SOC_QUALCOMM_PCIE_ASYNCHRONOUS_INIT
+	bool
+	default n
+	help
+	  When enabled, qcom_setup_pcie_host will initiate the PCIe
+	  hardware power-up sequence but will not block the boot flow
+	  to wait for the link-up status. This can reduce overall
+	  boot time, but requires late-stage drivers to verify link
+	  readiness before access.
+
+config QC_DUMP_MEMCHIP_INFO
+	bool
+	default n
+	help
+	  When enabled, coreboot will print detailed memory chip attributes
+	  to the console during the boot process. This includes
+	  Manufacturer IDs, Revision IDs, and Serial IDs for each rank.
+
+	  Note: Enabling this feature increases the size of the romstage
+	  binary. If your platform is near its ROM size limit, this may
+	  cause a build failure. Only enable this for memory bring-up or
+	  debugging.
+
+config QC_SANITIZE_MEMCHIP_INFO
+	bool
+	default n
+	help
+	  Enable this option to filter out MEM_CHIP_UNDEFINED entries from the
+	  memory chip information table provided by the Qualcomm library (QCLib).
+
+	  When enabled, the table is collapsed in-place to remove empty slots,
+	  ensuring that logs and downstream data consumers only see valid
+	  memory hardware information.
+
+	  If unsure, say N.
+
+config QC_MEMCHIP_INFO_ON_RERUN
+	bool
+	help
+	  Selected by platforms where QcLib provides or requires the memory chip
+	  information table entry (QCLIB_TE_MEM_CHIP_INFO) during the secondary
+	  run/re-entry stage (qclib_rerun).
+
+config QC_QDUTT_ENABLE
+	bool
+	default n
+	prompt "Enable QDUTT for DRAM Eye Diagram Testing"
+	help
+	  QDUTT provides specialized utilities for DDR PHY training and
+	  margin analysis.
+
+	  Enable this option to allow the collection of DRAM eye diagram
+	  data during the bootloader training phase. This is essential for
+	  validating signal integrity and optimizing DRAM performance
+	  on new hardware iterations.
+
+config QC_SPI_DRIVE_STRENGTH_MA
+	int
+	default 3
+	help
+	  Sets the drive strength for the QSPI GPIO lines (CLK, DATA_0, DATA_1).
+	  Lower frequencies default to 8mA (GPIO_8MA aka 3).
+	  Allow SoC/mainboard to override the SPI drive strength as applicable.
+	  Refer to `GPIO TLMM: Drive Strength` enum inside gpio_common.h
+
+config SOC_QUALCOMM_SPLIT_AOP_CBFS
+	bool
+	default n
+	help
+	  Select this option to package separate RO (`_ro`, compressed in
+	  COREBOOT) and RW (`_rw`, uncompressed in FW_MAIN_A/B) CBFS entries
+	  for AOP firmware and metadata (`aop`, `aop_meta`, `aop_cfg`,
+	  `aop_devcfg_meta`). This saves flash space in the RO region while
+	  avoiding decompression overhead during normal RW boot.
+
+config QC_DELTA_DCB_ENABLE
+	bool
+	default n
+	help
+	  Enable loading of DELTA_DCB blob for QCLib.
+
+config QC_HYP_AC_CFG_PRERAM
+	bool
+	default n
+	help
+	  When enabled, hyp_ac_config is a configuration image which will be loaded
+	  during the ROM stage of system execution.
+
+config QC_SOCCP_ENABLE
+	bool
+	default n
+	help
+	  When enabled, soccp and soccp_dtb is a configuration image which will be loaded
+	  during the ROM stage of system execution.
+
+endif

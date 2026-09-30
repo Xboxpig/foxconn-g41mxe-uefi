@@ -1,0 +1,323 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#include <bootstate.h>
+#include <console/console.h>
+#include <device/device.h>
+#include <device/pnp.h>
+#include <ec/acpi/ec.h>
+#include <option.h>
+#include "ecdefs.h"
+#include "ec.h"
+
+#define ITE_IT5570 0x5570
+#define ITE_IT8987 0x8987
+
+uint16_t ec_get_version(void)
+{
+	return (ec_read(ECRAM_MAJOR_VERSION) << 8) | ec_read(ECRAM_MINOR_VERSION);
+}
+
+static uint8_t get_ec_value_from_option(const char *name, uint8_t fallback, const uint8_t *lut,
+					size_t lut_size)
+{
+	const uint8_t value = get_uint_option(name, fallback);
+
+	/* Check if the value exists in the LUT array */
+	for (size_t i = 0; i < lut_size; i++)
+		if (lut[i] == value)
+			return value;
+
+	return fallback;
+}
+
+static uint16_t ec_get_chip_id(unsigned int port)
+{
+	return (pnp_read_index(port, ITE_CHIPID1) << 8) | pnp_read_index(port, ITE_CHIPID2);
+}
+
+static void merlin_restore_options(void *unused)
+{
+	(void)unused;
+
+	const uint16_t chip_id = ec_get_chip_id(ITE_FIXED_ADDR);
+
+	if (chip_id != ITE_IT5570 && chip_id != ITE_IT8987) {
+		printk(BIOS_ERR, "ITE: Unsupported chip ID 0x%04x.\n", chip_id);
+		return;
+	}
+
+	/*
+	 * Restore settings from options into EC RAM:
+	 *
+	 * kbl_timeout
+	 * fn_ctrl_swap
+	 * max_charge
+	 * fan_mode
+	 * fn_lock_state
+	 * trackpad_state
+	 * kbl_brightness
+	 * kbl_state
+	 * charging_speed
+	 * lid_switch
+	 * power_led
+	 * power_on_ac
+	 */
+
+	/*
+	 * Keyboard Backlight Timeout
+	 *
+	 * Setting:	kbl_timeout
+	 *
+	 * Values:	30 Seconds, 1 Minute, 3 Minutes, 5 Minutes, Never
+	 * Default:	30 Seconds
+	 *
+	 */
+	const uint8_t kbl_timeout[] = {SEC_30, MIN_1, MIN_3, MIN_5, NEVER};
+
+	ec_write(ECRAM_KBL_TIMEOUT,
+		 get_ec_value_from_option("kbl_timeout", SEC_30, kbl_timeout,
+					  ARRAY_SIZE(kbl_timeout)));
+
+	/*
+	 * Fn Ctrl Reverse
+	 *
+	 * Setting:	fn_ctrl_swap
+	 *
+	 * Values:	Disabled, Enabled
+	 * Default:	Disabled
+	 *
+	 */
+	const uint8_t fn_ctrl_swap[] = {FN_CTRL, CTRL_FN};
+
+	ec_write(ECRAM_FN_CTRL_REVERSE,
+		 get_ec_value_from_option("fn_ctrl_swap", FN_CTRL, fn_ctrl_swap,
+					  ARRAY_SIZE(fn_ctrl_swap)));
+
+	/*
+	 * Maximum Charge Level
+	 *
+	 * Setting:	max_charge
+	 *
+	 * Values:	60%, 80%, 100%
+	 * Default:	100%
+	 *
+	 */
+	const uint8_t max_charge[] = {CHARGE_100, CHARGE_80, CHARGE_60};
+
+	if (CONFIG(EC_STARLABS_MAX_CHARGE))
+		ec_write(ECRAM_MAX_CHARGE,
+			 get_ec_value_from_option("max_charge", CHARGE_100, max_charge,
+						  ARRAY_SIZE(max_charge)));
+
+	/*
+	 * Fan Mode
+	 *
+	 * Setting:	fan_mode
+	 *
+	 * Values:	Disabled, Quiet, Normal, Aggressive
+	 * Default:	Normal
+	 *
+	 */
+	const uint8_t fan_mode[] = {FAN_NORMAL, FAN_AGGRESSIVE, FAN_QUIET, FAN_DISABLED};
+
+	if (CONFIG(EC_STARLABS_FAN))
+		ec_write(ECRAM_FAN_MODE,
+			 get_ec_value_from_option("fan_mode", FAN_NORMAL, fan_mode,
+						  ARRAY_SIZE(fan_mode)));
+
+	/*
+	 * Function Lock
+	 *
+	 * Setting:	fn_lock_state
+	 *
+	 * Values:	Locked, Unlocked
+	 * Default:	Locked
+	 *
+	 */
+	const uint8_t fn_lock_state[] = {UNLOCKED, LOCKED};
+
+	ec_write(ECRAM_FN_LOCK_STATE,
+		 get_ec_value_from_option(
+			 "fn_lock_state", LOCKED, fn_lock_state, ARRAY_SIZE(fn_lock_state)));
+
+	/*
+	 * Trackpad State
+	 *
+	 * Setting:	trackpad_state
+	 *
+	 * Values:	Enabled, Disabled
+	 * Default:	Enabled
+	 *
+	 */
+	const uint8_t trackpad_state[] = {TRACKPAD_ENABLED, TRACKPAD_DISABLED};
+
+	ec_write(ECRAM_TRACKPAD_STATE,
+		 get_ec_value_from_option(
+			 "trackpad_state", TRACKPAD_ENABLED, trackpad_state,
+			 ARRAY_SIZE(trackpad_state)));
+
+	/*
+	 * Keyboard Backlight Brightness
+	 *
+	 * Setting:	kbl_brightness
+	 *
+	 * Values:	Off, Low, High / Off, On
+	 * Default:	Low
+	 *
+	 */
+	const uint8_t kbl_brightness[] = {KBL_ON, KBL_OFF, KBL_LOW, KBL_HIGH};
+
+	const uint8_t kbl_brightness_fallback =
+		CONFIG(EC_STARLABS_KBL_LEVELS) ? KBL_LOW : KBL_ON;
+
+	ec_write(ECRAM_KBL_BRIGHTNESS,
+		 get_ec_value_from_option(
+			 "kbl_brightness",
+			 kbl_brightness_fallback,
+			 kbl_brightness, ARRAY_SIZE(kbl_brightness)));
+
+	/*
+	 * Keyboard Backlight State
+	 *
+	 * Setting:	kbl_state
+	 *
+	 * Values:	Off, On
+	 * Default:	On
+	 *
+	 * Note:	Always enable, as the brightness level of `off` disables it.
+	 *
+	 */
+
+	ec_write(ECRAM_KBL_STATE, KBL_ENABLED);
+
+	/*
+	 * Charging Speed
+	 *
+	 * Setting:	charging_speed
+	 *
+	 * Values:	1.0C, 0.5C, 0.2C
+	 * Default:	1.0C
+	 *
+	 */
+	const uint8_t charging_speed[] = {SPEED_1_0C, SPEED_0_5C, SPEED_0_2C};
+
+	if (CONFIG(EC_STARLABS_CHARGING_SPEED))
+		ec_write(ECRAM_CHARGING_SPEED,
+			 get_ec_value_from_option("charging_speed", SPEED_1_0C, charging_speed,
+						  ARRAY_SIZE(charging_speed)));
+
+	/*
+	 * Lid Switch
+	 *
+	 * Setting:	lid_switch
+	 *
+	 * Values:	0, 1
+	 * Default:	0
+	 *
+	 */
+	const uint8_t lid_switch[] = {SWITCH_NORMAL, SWITCH_SLEEP_ONLY, SWITCH_DISABLED};
+
+	if (CONFIG(EC_STARLABS_LID_SWITCH))
+		ec_write(ECRAM_LID_SWITCH,
+			 get_ec_value_from_option("lid_switch", SWITCH_NORMAL, lid_switch,
+						  ARRAY_SIZE(lid_switch)));
+
+	/*
+	 * Power LED Brightness
+	 *
+	 * Setting:	power_led
+	 *
+	 * Values:	0, 1, 2
+	 * Default:	0
+	 *
+	 */
+	const uint8_t led_brightness[] = {LED_NORMAL, LED_REDUCED, LED_OFF};
+
+	if (CONFIG(EC_STARLABS_POWER_LED))
+		ec_write(ECRAM_POWER_LED,
+			 get_ec_value_from_option("power_led", LED_NORMAL, led_brightness,
+						  ARRAY_SIZE(led_brightness)));
+
+	/*
+	 * Charge LED Brightness
+	 *
+	 * Setting:	charge_led
+	 *
+	 * Values:	0, 1, 2
+	 * Default:	0
+	 *
+	 */
+
+	if (CONFIG(EC_STARLABS_CHARGE_LED))
+		ec_write(ECRAM_CHARGE_LED,
+			 get_ec_value_from_option("charge_led", LED_NORMAL, led_brightness,
+						  ARRAY_SIZE(led_brightness)));
+
+	/*
+	 * Power on when adapter is connected
+	 *
+	 * Setting:	power_on_ac
+	 *
+	 * Values:	Enabled, Disabled
+	 * Default:	Enabled on Mini PC systems, disabled otherwise
+	 *
+	 */
+	const uint8_t power_on_ac[] = {0, 1};
+
+	if (CONFIG(EC_STARLABS_ADAPTER_AUTO_POWER_ON))
+		ec_write(ECRAM_POWER_ON_AC,
+			 get_ec_value_from_option("power_on_ac",
+						  ADAPTER_AUTO_POWER_ON_DEFAULT,
+						  power_on_ac, ARRAY_SIZE(power_on_ac)));
+}
+BOOT_STATE_INIT_ENTRY(BS_DEV_INIT, BS_ON_ENTRY, merlin_restore_options, NULL);
+
+static struct device_operations ops = {
+	.read_resources = noop_read_resources,
+	.set_resources = noop_set_resources,
+};
+
+static struct pnp_info pnp_dev_info[] = {
+	/* Serial Port 1 (UART1) */
+	{ NULL,	ITE_SP1,	PNP_IO0 | PNP_IRQ0,		0x0ff8,		},
+	/* Serial Port 2 (UART2) */
+	{ NULL, ITE_SP2,	PNP_IO0 | PNP_IRQ0,		0x0ff8,		},
+	/* System Wake-Up Control (SWUC) */
+	{ NULL,	ITE_SWUC,	PNP_IO0 | PNP_IRQ0,		0xfff0,		},
+	/* KBC / Mouse Interface */
+	{ NULL, ITE_SWUC,	PNP_IRQ0,					},
+	/* KBC / Keyboard Interface */
+	{ NULL, ITE_KBCK,	PNP_IO0 | PNP_IO1 | PNP_IRQ0,	0x07ff,	0x07ff,	},
+	/* Consumer IR (CIR) */
+	{ NULL, ITE_IR,		PNP_IO0 | PNP_IRQ0,		0xfff8,		},
+	/* Shared Memory / Flash Interface (SMFI) */
+	{ NULL, ITE_SMFI,	PNP_IO0 | PNP_IRQ0,		0xfff0,		},
+	/* RTC-like Timer (RCTC) */
+	{ NULL, ITE_RTCT,	PNP_IO0 | PNP_IO1 | PNP_IO2 | PNP_IO3 | PNP_IRQ0,
+				0xfffe, 0xfffe, 0xfffe, 0xfffe,			},
+	/* Power Management I/F Channel 1 (PMC1) */
+	{ NULL, ITE_PMC1,	PNP_IO0 | PNP_IO1 | PNP_IRQ0,	0x07ff,	0x07ff,	},
+	/* Power Management I/F Channel 2 (PMC2) */
+	{ NULL, ITE_PMC2,	PNP_IO0 | PNP_IO1 | PNP_IO2 | PNP_IRQ0,	0x07fc,
+				0x07fc, 0xfff0,					},
+	/* Serial Peripheral Interface (SSPI) */
+	{ NULL,	ITE_SSPI,	PNP_IO0 | PNP_IRQ0,		0xfff8,		},
+	/* Platform Environment Control Interface (PECI) */
+	{ NULL, ITE_PECI,	PNP_IRQ0,			0xfff8,		},
+	/* Power Management I/F Channel 3 (PMC3) */
+	{ NULL, ITE_PMC3,	PNP_IO0 | PNP_IO1 | PNP_IRQ0,	0x07ff,	0x07ff,	},
+	/* Power Management I/F Channel 4 (PMC4) */
+	{ NULL, ITE_PMC4,	PNP_IO0 | PNP_IO1 | PNP_IRQ0,	0x07ff,	0x07ff,	},
+	/* Power Management I/F Channel 5 (PMC5) */
+	{ NULL, ITE_PMC5,	PNP_IO0 | PNP_IO1 | PNP_IRQ0,	0x07ff,	0x07ff,	},
+};
+
+static void enable_dev(struct device *dev)
+{
+	pnp_enable_devices(dev, &ops, ARRAY_SIZE(pnp_dev_info), pnp_dev_info);
+}
+
+struct chip_operations ec_starlabs_merlin_ops = {
+	.name = "ITE EC",
+	.enable_dev = enable_dev
+};

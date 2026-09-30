@@ -1,0 +1,557 @@
+## SPDX-License-Identifier: GPL-2.0-only
+ifeq ($(CONFIG_SOC_QUALCOMM_CALYPSO_BASE),y)
+
+decompressor-y += decompressor.c
+decompressor-y += mmu.c
+decompressor-y += ../common/timer.c
+all-y += ../common/timer.c
+all-y += ../common/gpio.c
+all-y += ../common/clock.c
+all-y += clock.c
+all-y += ../common/spi.c
+all-y += ../common/qspi.c
+all-y += ../common/qupv3_config.c
+all-y += qcom_qup_se.c
+all-y += ../common/qup_se_handler.c
+all-y += ../common/qupv3_spi.c
+all-y += ../common/qupv3_i2c.c
+
+################################################################################
+bootblock-y += bootblock.c
+bootblock-y += mmu.c
+bootblock-$(CONFIG_DRIVERS_UART) += ../common/uart_bitbang.c
+
+################################################################################
+verstage-$(CONFIG_DRIVERS_UART) += ../common/qupv3_uart.c
+
+################################################################################
+romstage-y += cbmem.c
+romstage-y += ../common/shrm_load_reset.c
+romstage-y += cpucp_load_reset.c
+romstage-y += ../common/qclib.c
+romstage-y += qclib.c
+romstage-y += ../common/mmu.c
+romstage-y += ../common/watchdog.c
+romstage-y += mmu.c
+romstage-y += ../common/aop_load_reset.c
+romstage-y += hyp_ac_config.c
+romstage-$(CONFIG_QC_SOCCP_ENABLE) += soccp_load_reset.c
+romstage-$(CONFIG_DRIVERS_UART) += ../common/qupv3_uart.c
+romstage-$(CONFIG_SOC_QUALCOMM_CDT) += ../common/cdt.c
+romstage-y += platform_info.c
+romstage-y += ../common/spmi.c
+romstage-y += pmic.c
+romstage-y += ../common/pmic_gpio.c
+romstage-$(CONFIG_PCI) += pcie.c
+ifeq ($(CONFIG_SOC_QUALCOMM_PCIE_ASYNCHRONOUS_INIT),y)
+romstage-$(CONFIG_PCI) += ../common/pcie_common.c
+endif
+
+################################################################################
+
+ramstage-y += soc.c
+ramstage-y += cbmem.c
+ramstage-y += ../common/mmu.c
+ramstage-$(CONFIG_DRIVERS_UART) += ../common/qupv3_uart.c
+ramstage-$(CONFIG_PCI) += pcie.c
+ramstage-$(CONFIG_PCI) += ../common/pcie_common.c
+ramstage-y += cpucp_load_reset.c
+ramstage-y += ../common/spmi.c
+ramstage-y += display/disp.c
+ramstage-y += lpass.c
+ramstage-y += ../common/cmd_db.c
+ramstage-y += ../common/rpmh.c ../common/rpmh_bcm.c ../common/rpmh_regulator.c ../common/rpmh_rsc.c
+ramstage-y += rpmh_rsc_init.c
+ramstage-y += ../common/pmic_gpio.c
+ramstage-$(CONFIG_SOC_QUALCOMM_CDT) += ../common/cdt.c
+ramstage-y += platform_info.c
+ramstage-y += usb/usb.c
+ramstage-y += usb/snps_usb_phy.c
+ramstage-y += usb/qmpv4_usb_phy.c
+ramstage-y += ../common/tsens.c
+ramstage-y += tsens_map.c
+
+################################################################################
+
+CPPFLAGS_common += -Isrc/soc/qualcomm/calypso/include
+CPPFLAGS_common += -Isrc/soc/qualcomm/common/include
+
+################################################################################
+# look for QC blobs if QC SoC blobs are only available in upstream else ignore
+ifeq ($(CONFIG_QC_BLOBS_UPSTREAM),y)
+ifeq ($(CONFIG_USE_QC_BLOBS),y)
+CALYPSO_BLOB := $(top)/3rdparty/qc_blobs/calypso
+
+ifeq ($(CONFIG_QC_SECURE_BOOT_BLOBS),y)
+BLOB_VARIANT := secure
+else
+BLOB_VARIANT := non_secure
+endif
+
+DTB_DCB_BLOB_PATH := calypso
+
+ifeq ($(CONFIG_QC_SDI_ENABLE),y)
+BL31_MAKEARGS += QTI_SDI_BUILD=1
+BL31_MAKEARGS += QTISECLIB_PATH=$(CALYPSO_BLOB)/qtiseclib/libqtisec_dbg.a
+else
+BL31_MAKEARGS += QTISECLIB_PATH=$(CALYPSO_BLOB)/qtiseclib/libqtisec.a
+endif # CONFIG_QC_SDI_ENABLE
+
+ifeq ($(CONFIG_QC_QDUTT_ENABLE),y)
+QCLIB_FILE := $(CALYPSO_BLOB)/QDUTT/boot/QcDdi.elf
+DCB_FILE := $(CALYPSO_BLOB)/QDUTT/boot/$(DTB_DCB_BLOB_PATH)/dcb.bin
+DELTA_DCB_FILE := $(CALYPSO_BLOB)/QDUTT/boot/$(DTB_DCB_BLOB_PATH)/delta_dcb.bin
+SHRM_FILE := $(CALYPSO_BLOB)/QDUTT/$(BLOB_VARIANT)/shrm/shrm.elf
+else
+QCLIB_FILE := $(CALYPSO_BLOB)/boot/QcLib.elf
+DCB_FILE := $(CALYPSO_BLOB)/boot/$(DTB_DCB_BLOB_PATH)/dcb.bin
+DELTA_DCB_FILE := $(CALYPSO_BLOB)/boot/$(DTB_DCB_BLOB_PATH)/delta_dcb.bin
+SHRM_FILE := $(CALYPSO_BLOB)/$(BLOB_VARIANT)/shrm/shrm.elf
+endif # CONFIG_QC_QDUTT_ENABLE
+
+ifeq ($(CONFIG_QC_RAMDUMP_ENABLE),y)
+AOP_FILE := $(CALYPSO_BLOB)/RAMDUMP/$(BLOB_VARIANT)/aop/aop.mbn
+AOP_CFG_FILE := $(CALYPSO_BLOB)/RAMDUMP/$(BLOB_VARIANT)/aop/aop_devcfg.mbn
+APDP_FILE := $(CALYPSO_BLOB)/RAMDUMP/$(BLOB_VARIANT)/apdp/apdp.mbn
+else
+AOP_FILE := $(CALYPSO_BLOB)/$(BLOB_VARIANT)/aop/aop.mbn
+AOP_CFG_FILE := $(CALYPSO_BLOB)/$(BLOB_VARIANT)/aop/aop_devcfg.mbn
+APDP_FILE := $(CALYPSO_BLOB)/$(BLOB_VARIANT)/apdp/apdp.mbn
+endif # CONFIG_QC_QDUTT_ENABLE
+
+################################################################################
+ifeq ($(CONFIG_QC_SDI_ENABLE),y)
+QCSDI_FILE := $(CALYPSO_BLOB)/boot/QcSdi.elf
+QCSDI_CBFS := $(CONFIG_CBFS_PREFIX)/qcsdi
+$(QCSDI_CBFS)-file := $(QCSDI_FILE)
+$(QCSDI_CBFS)-type := stage
+$(QCSDI_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(QCSDI_CBFS)
+endif
+
+################################################################################
+QC_SEC_FILE := $(CALYPSO_BLOB)/$(BLOB_VARIANT)/qc_sec/qc_sec.mbn
+TME_SEQ_FILE := $(CALYPSO_BLOB)/$(BLOB_VARIANT)/tme/sequencer_ram.elf
+TME_FW_FILE := $(CALYPSO_BLOB)/$(BLOB_VARIANT)/tme/signed_firmware_soc_view.elf
+
+$(objcbfs)/bootblock.bin: $(objcbfs)/bootblock.raw.elf
+	@util/qualcomm/createxbl.py --mbn_version 7 -f $(objcbfs)/bootblock.raw.elf \
+		-o $(objcbfs)/bootblock.mbn \
+		-a 64 -c 64
+	@util/qualcomm/create_multielf.py -f $(TME_SEQ_FILE),$(TME_FW_FILE),$(QC_SEC_FILE),$(objcbfs)/bootblock.mbn \
+		-o $(objcbfs)/merged_bb.melf
+	@printf "\nqgpt.py 4K sector size\n"
+	@util/qualcomm/qgpt.py $(objcbfs)/merged_bb.melf \
+		$(objcbfs)/bootblock.bin
+
+################################################################################
+QCLIB_CBFS := $(CONFIG_CBFS_PREFIX)/qclib
+$(QCLIB_CBFS)-file := $(QCLIB_FILE)
+$(QCLIB_CBFS)-type := stage
+# FIXME: b/511898023
+$(QCLIB_CBFS)-compression := none
+cbfs-files-y += $(QCLIB_CBFS)
+
+################################################################################
+DCB_CBFS := $(CONFIG_CBFS_PREFIX)/dcb
+$(DCB_CBFS)-file := $(DCB_FILE)
+$(DCB_CBFS)-type := raw
+$(DCB_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(DCB_CBFS)
+
+################################################################################
+DELTA_DCB_CBFS := $(CONFIG_CBFS_PREFIX)/delta_dcb
+$(DELTA_DCB_CBFS)-file := $(DELTA_DCB_FILE)
+$(DELTA_DCB_CBFS)-type := raw
+$(DELTA_DCB_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(DELTA_DCB_CBFS)
+
+################################################################################
+DTB_FILE := $(CALYPSO_BLOB)/boot/$(DTB_DCB_BLOB_PATH)/pre-ddr.dtb
+DTB_CBFS := $(CONFIG_CBFS_PREFIX)/dtb
+$(DTB_CBFS)-file := $(DTB_FILE)
+$(DTB_CBFS)-type := raw
+$(DTB_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(DTB_CBFS)
+
+################################################################################
+CPR_FILE := $(CALYPSO_BLOB)/boot/$(DTB_DCB_BLOB_PATH)/cpr.bin
+CPR_CBFS := $(CONFIG_CBFS_PREFIX)/cpr
+$(CPR_CBFS)-file := $(CPR_FILE)
+$(CPR_CBFS)-type := raw
+$(CPR_CBFS)-compression := $(CBFS_PRERAM_COMPRESS_FLAG)
+cbfs-files-y += $(CPR_CBFS)
+
+################################################################################
+UART_FW_FILE := $(CALYPSO_BLOB)/qup_fw/uart_fw.bin
+UART_FW_CBFS := $(CONFIG_CBFS_PREFIX)/uart_fw
+$(UART_FW_CBFS)-file := $(UART_FW_FILE)
+$(UART_FW_CBFS)-type := raw
+$(UART_FW_CBFS)-compression := none
+cbfs-files-y += $(UART_FW_CBFS)
+
+################################################################################
+SPI_FW_FILE := $(CALYPSO_BLOB)/qup_fw/spi_fw.bin
+SPI_FW_CBFS := $(CONFIG_CBFS_PREFIX)/spi_fw
+$(SPI_FW_CBFS)-file := $(SPI_FW_FILE)
+$(SPI_FW_CBFS)-type := raw
+$(SPI_FW_CBFS)-compression := none
+cbfs-files-y += $(SPI_FW_CBFS)
+
+################################################################################
+I2C_FW_FILE := $(CALYPSO_BLOB)/qup_fw/i2c_fw.bin
+I2C_FW_CBFS := $(CONFIG_CBFS_PREFIX)/i2c_fw
+$(I2C_FW_CBFS)-file := $(I2C_FW_FILE)
+$(I2C_FW_CBFS)-type := raw
+$(I2C_FW_CBFS)-compression := none
+cbfs-files-y += $(I2C_FW_CBFS)
+
+################################################################################
+# Rule to create aop_meta from aop.mbn
+# This rule depends on aop.mbn built and the extractor script existing.
+$(obj)/mainboard/$(MAINBOARDDIR)/aop_meta: $(AOP_FILE) util/qualcomm/elf_segment_extractor.py
+	@echo "Extracting ELF headers and hash table segment from $< to $@"
+	@util/qualcomm/elf_segment_extractor.py --eh --pht --hashtable $< $@
+
+AOP_META_FILE := $(obj)/mainboard/$(MAINBOARDDIR)/aop_meta
+
+# Rule to create aop_meta from aop_devcfg.mbn
+# This rule depends on aop_devcfg.mbn built and the extractor script existing.
+$(obj)/mainboard/$(MAINBOARDDIR)/aop_devcfg_meta: $(AOP_CFG_FILE) util/qualcomm/elf_segment_extractor.py
+	@echo "Extracting ELF headers and hash table segment from $< to $@"
+	@util/qualcomm/elf_segment_extractor.py --eh --pht --hashtable $< $@
+
+AOP_DEVCFG_META_FILE := $(obj)/mainboard/$(MAINBOARDDIR)/aop_devcfg_meta
+
+ifeq ($(CONFIG_SOC_QUALCOMM_SPLIT_AOP_CBFS),y)
+
+AOP_CBFS_RW := $(CONFIG_CBFS_PREFIX)/aop_rw
+regions-for-file-$(AOP_CBFS_RW) = FW_MAIN_A,FW_MAIN_B
+$(AOP_CBFS_RW)-file := $(AOP_FILE)
+$(AOP_CBFS_RW)-type := payload
+$(AOP_CBFS_RW)-compression := none
+cbfs-files-y += $(AOP_CBFS_RW)
+
+AOP_CBFS_RO := $(CONFIG_CBFS_PREFIX)/aop_ro
+regions-for-file-$(AOP_CBFS_RO) = COREBOOT
+$(AOP_CBFS_RO)-file := $(AOP_FILE)
+$(AOP_CBFS_RO)-type := payload
+$(AOP_CBFS_RO)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(AOP_CBFS_RO)
+
+AOP_META_CBFS_RW := $(CONFIG_CBFS_PREFIX)/aop_meta_rw
+regions-for-file-$(AOP_META_CBFS_RW) = FW_MAIN_A,FW_MAIN_B
+$(AOP_META_CBFS_RW)-file := $(AOP_META_FILE)
+$(AOP_META_CBFS_RW)-type := raw
+$(AOP_META_CBFS_RW)-compression := none
+cbfs-files-y += $(AOP_META_CBFS_RW)
+
+AOP_META_CBFS_RO := $(CONFIG_CBFS_PREFIX)/aop_meta_ro
+regions-for-file-$(AOP_META_CBFS_RO) = COREBOOT
+$(AOP_META_CBFS_RO)-file := $(AOP_META_FILE)
+$(AOP_META_CBFS_RO)-type := raw
+$(AOP_META_CBFS_RO)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(AOP_META_CBFS_RO)
+
+AOP_CFG_CBFS_RW := $(CONFIG_CBFS_PREFIX)/aop_cfg_rw
+regions-for-file-$(AOP_CFG_CBFS_RW) = FW_MAIN_A,FW_MAIN_B
+$(AOP_CFG_CBFS_RW)-file := $(AOP_CFG_FILE)
+$(AOP_CFG_CBFS_RW)-type := payload
+$(AOP_CFG_CBFS_RW)-compression := none
+cbfs-files-y += $(AOP_CFG_CBFS_RW)
+
+AOP_CFG_CBFS_RO := $(CONFIG_CBFS_PREFIX)/aop_cfg_ro
+regions-for-file-$(AOP_CFG_CBFS_RO) = COREBOOT
+$(AOP_CFG_CBFS_RO)-file := $(AOP_CFG_FILE)
+$(AOP_CFG_CBFS_RO)-type := payload
+$(AOP_CFG_CBFS_RO)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(AOP_CFG_CBFS_RO)
+
+AOP_DEVCFG_META_CBFS_RW := $(CONFIG_CBFS_PREFIX)/aop_devcfg_meta_rw
+regions-for-file-$(AOP_DEVCFG_META_CBFS_RW) = FW_MAIN_A,FW_MAIN_B
+$(AOP_DEVCFG_META_CBFS_RW)-file := $(AOP_DEVCFG_META_FILE)
+$(AOP_DEVCFG_META_CBFS_RW)-type := raw
+$(AOP_DEVCFG_META_CBFS_RW)-compression := none
+cbfs-files-y += $(AOP_DEVCFG_META_CBFS_RW)
+
+AOP_DEVCFG_META_CBFS_RO := $(CONFIG_CBFS_PREFIX)/aop_devcfg_meta_ro
+regions-for-file-$(AOP_DEVCFG_META_CBFS_RO) = COREBOOT
+$(AOP_DEVCFG_META_CBFS_RO)-file := $(AOP_DEVCFG_META_FILE)
+$(AOP_DEVCFG_META_CBFS_RO)-type := raw
+$(AOP_DEVCFG_META_CBFS_RO)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(AOP_DEVCFG_META_CBFS_RO)
+
+else
+
+AOP_CBFS := $(CONFIG_CBFS_PREFIX)/aop
+$(AOP_CBFS)-file := $(AOP_FILE)
+$(AOP_CBFS)-type := payload
+$(AOP_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(AOP_CBFS)
+
+AOP_META_CBFS := $(CONFIG_CBFS_PREFIX)/aop_meta
+$(AOP_META_CBFS)-file := $(AOP_META_FILE)
+$(AOP_META_CBFS)-type := raw
+$(AOP_META_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(AOP_META_CBFS)
+
+AOP_CFG_CBFS := $(CONFIG_CBFS_PREFIX)/aop_cfg
+$(AOP_CFG_CBFS)-file := $(AOP_CFG_FILE)
+$(AOP_CFG_CBFS)-type := payload
+$(AOP_CFG_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(AOP_CFG_CBFS)
+
+AOP_DEVCFG_META_CBFS := $(CONFIG_CBFS_PREFIX)/aop_devcfg_meta
+$(AOP_DEVCFG_META_CBFS)-file := $(AOP_DEVCFG_META_FILE)
+$(AOP_DEVCFG_META_CBFS)-type := raw
+$(AOP_DEVCFG_META_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(AOP_DEVCFG_META_CBFS)
+
+endif
+################################################################################
+CPUCP_FILE := $(CALYPSO_BLOB)/cpucp/cpucp.elf
+
+CPUCP_CBFS_RW := $(CONFIG_CBFS_PREFIX)/cpucp_rw
+regions-for-file-$(CPUCP_CBFS_RW) = FW_MAIN_A,FW_MAIN_B
+$(CPUCP_CBFS_RW)-file := $(CPUCP_FILE)
+$(CPUCP_CBFS_RW)-type := payload
+$(CPUCP_CBFS_RW)-compression := none
+cbfs-files-y += $(CPUCP_CBFS_RW)
+
+CPUCP_CBFS_RO := $(CONFIG_CBFS_PREFIX)/cpucp_ro
+regions-for-file-$(CPUCP_CBFS_RO) = COREBOOT
+$(CPUCP_CBFS_RO)-file := $(CPUCP_FILE)
+$(CPUCP_CBFS_RO)-type := payload
+$(CPUCP_CBFS_RO)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(CPUCP_CBFS_RO)
+
+################################################################################
+# Rule to create cpucp_meta from cpucp.elf
+# This rule depends on cpucp.elf being built and the extractor script existing.
+$(obj)/mainboard/$(MAINBOARDDIR)/cpucp_meta: $(CALYPSO_BLOB)/cpucp/cpucp.elf util/qualcomm/elf_segment_extractor.py
+	@echo "Extracting ELF headers and hash table segment from $< to $@"
+	@util/qualcomm/elf_segment_extractor.py --eh --pht --hashtable $< $@
+
+CPUCP_META_FILE := $(obj)/mainboard/$(MAINBOARDDIR)/cpucp_meta
+CPUCP_META_CBFS := $(CONFIG_CBFS_PREFIX)/cpucp_meta
+$(CPUCP_META_CBFS)-file := $(CPUCP_META_FILE)
+$(CPUCP_META_CBFS)-type := raw
+$(CPUCP_META_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(CPUCP_META_CBFS)
+
+################################################################################
+CPUCP_DTBS_FILE := $(CALYPSO_BLOB)/cpucp/cpucp_dtbs.elf
+CPUCP_DTBS_CBFS := $(CONFIG_CBFS_PREFIX)/cpucp_dtbs
+$(CPUCP_DTBS_CBFS)-file := $(CPUCP_DTBS_FILE)
+$(CPUCP_DTBS_CBFS)-type := payload
+$(CPUCP_DTBS_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(CPUCP_DTBS_CBFS)
+
+################################################################################
+PDP_FILE := $(CALYPSO_BLOB)/pdp/pdp.elf
+
+PDP_CBFS_RW := $(CONFIG_CBFS_PREFIX)/pdp_rw
+regions-for-file-$(PDP_CBFS_RW) = FW_MAIN_A,FW_MAIN_B
+$(PDP_CBFS_RW)-file := $(PDP_FILE)
+$(PDP_CBFS_RW)-type := payload
+$(PDP_CBFS_RW)-compression := none
+cbfs-files-y += $(PDP_CBFS_RW)
+
+PDP_CBFS_RO := $(CONFIG_CBFS_PREFIX)/pdp_ro
+regions-for-file-$(PDP_CBFS_RO) = COREBOOT
+$(PDP_CBFS_RO)-file := $(PDP_FILE)
+$(PDP_CBFS_RO)-type := payload
+$(PDP_CBFS_RO)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(PDP_CBFS_RO)
+
+################################################################################
+PDP_CDB_FILE := $(CALYPSO_BLOB)/pdp/pdp_cdb.elf
+PDP_CDB_CBFS := $(CONFIG_CBFS_PREFIX)/pdp_cdb
+$(PDP_CDB_CBFS)-file := $(PDP_CDB_FILE)
+$(PDP_CDB_CBFS)-type := payload
+$(PDP_CDB_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(PDP_CDB_CBFS)
+
+################################################################################
+SHRM_CBFS := $(CONFIG_CBFS_PREFIX)/shrm
+$(SHRM_CBFS)-file := $(SHRM_FILE)
+$(SHRM_CBFS)-type := payload
+$(SHRM_CBFS)-compression := $(CBFS_PRERAM_COMPRESS_FLAG)
+cbfs-files-y += $(SHRM_CBFS)
+
+################################################################################
+# Rule to create shrm_meta from shrm.elf
+# This rule depends on shrm.elf being built and the extractor script existing.
+$(obj)/mainboard/$(MAINBOARDDIR)/shrm_meta: $(SHRM_FILE) util/qualcomm/elf_segment_extractor.py
+	@echo "Extracting ELF headers and hash table segment from $< to $@"
+	@util/qualcomm/elf_segment_extractor.py --eh --pht --hashtable $< $@
+
+SHRM_META_FILE := $(obj)/mainboard/$(MAINBOARDDIR)/shrm_meta
+SHRM_META_CBFS := $(CONFIG_CBFS_PREFIX)/shrm_meta
+$(SHRM_META_CBFS)-file := $(SHRM_META_FILE)
+$(SHRM_META_CBFS)-type := raw
+$(SHRM_META_CBFS)-compression := $(CBFS_PRERAM_COMPRESS_FLAG)
+cbfs-files-y += $(SHRM_META_CBFS)
+
+################################################################################
+SOCCP_FILE := $(CALYPSO_BLOB)/$(BLOB_VARIANT)/soccp/soccp.mbn
+SOCCP_CBFS := $(CONFIG_CBFS_PREFIX)/soccp
+$(SOCCP_CBFS)-file := $(SOCCP_FILE)
+$(SOCCP_CBFS)-type := payload
+$(SOCCP_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(SOCCP_CBFS)
+
+################################################################################
+# Rule to create soccp_meta from soccp.mbn
+# This rule depends on soccp.mbn built and the extractor script existing.
+$(obj)/mainboard/$(MAINBOARDDIR)/soccp_meta: $(CALYPSO_BLOB)/$(BLOB_VARIANT)/soccp/soccp.mbn util/qualcomm/elf_segment_extractor.py
+	@echo "Extracting ELF headers and hash table segment from $< to $@"
+	@util/qualcomm/elf_segment_extractor.py --eh --pht --hashtable $< $@
+
+SOCCP_META_FILE := $(obj)/mainboard/$(MAINBOARDDIR)/soccp_meta
+SOCCP_META_CBFS := $(CONFIG_CBFS_PREFIX)/soccp_meta
+$(SOCCP_META_CBFS)-file := $(SOCCP_META_FILE)
+$(SOCCP_META_CBFS)-type := raw
+$(SOCCP_META_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(SOCCP_META_CBFS)
+
+################################################################################
+SOCCP_DTB_FILE := $(CALYPSO_BLOB)/$(BLOB_VARIANT)/soccp/soccp_dtb.mbn
+SOCCP_DTB_CBFS := $(CONFIG_CBFS_PREFIX)/soccp_dtb
+$(SOCCP_DTB_CBFS)-file := $(SOCCP_DTB_FILE)
+$(SOCCP_DTB_CBFS)-type := payload
+$(SOCCP_DTB_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(SOCCP_DTB_CBFS)
+
+################################################################################
+# Rule to create soccp_dtb_meta from soccp_dtb.mbn
+# This rule depends on soccp_dtb.mbn built and the extractor script existing.
+$(obj)/mainboard/$(MAINBOARDDIR)/soccp_dtb_meta: $(CALYPSO_BLOB)/$(BLOB_VARIANT)/soccp/soccp_dtb.mbn util/qualcomm/elf_segment_extractor.py
+	@echo "Extracting ELF headers and hash table segment from $< to $@"
+	@util/qualcomm/elf_segment_extractor.py --eh --pht --hashtable $< $@
+
+SOCCP_DTB_META_FILE := $(obj)/mainboard/$(MAINBOARDDIR)/soccp_dtb_meta
+SOCCP_DTB_META_CBFS := $(CONFIG_CBFS_PREFIX)/soccp_dtb_meta
+$(SOCCP_DTB_META_CBFS)-file := $(SOCCP_DTB_META_FILE)
+$(SOCCP_DTB_META_CBFS)-type := raw
+$(SOCCP_DTB_META_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(SOCCP_DTB_META_CBFS)
+
+################################################################################
+GSI_FW_FILE := $(CALYPSO_BLOB)/qup_fw/gsi_fw.bin
+GSI_FW_CBFS := $(CONFIG_CBFS_PREFIX)/gsi_fw
+$(GSI_FW_CBFS)-file := $(GSI_FW_FILE)
+$(GSI_FW_CBFS)-type := raw
+$(GSI_FW_CBFS)-compression := none
+cbfs-files-y += $(GSI_FW_CBFS)
+
+################################################################################
+QUPV3_FW_FILE := $(CALYPSO_BLOB)/qup_fw/qupv3_fw.elf
+QUPV3_FW_CBFS := $(CONFIG_CBFS_PREFIX)/qupv3_fw
+$(QUPV3_FW_CBFS)-file := $(QUPV3_FW_FILE)
+$(QUPV3_FW_CBFS)-type := payload
+cbfs-files-y += $(QUPV3_FW_CBFS)
+
+################################################################################
+ifeq ($(CONFIG_ARM64_USE_SECURE_OS),y)
+
+DEVCFG_TZ_FILE := $(CALYPSO_BLOB)/qtee/tz_oem_config.mbn
+DEVCFG_TZ_FILE_CBFS := $(CONFIG_CBFS_PREFIX)/tzoem_cfg
+$(DEVCFG_TZ_FILE_CBFS)-file := $(DEVCFG_TZ_FILE)
+$(DEVCFG_TZ_FILE_CBFS)-type := payload
+$(DEVCFG_TZ_FILE_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(DEVCFG_TZ_FILE_CBFS)
+
+################################################################################
+TZQTI_CFG_FILE := $(CALYPSO_BLOB)/qtee/tz_qti_config.mbn
+TZQTI_CFG_FILE_CBFS := $(CONFIG_CBFS_PREFIX)/tzqti_cfg
+$(TZQTI_CFG_FILE_CBFS)-file := $(TZQTI_CFG_FILE)
+$(TZQTI_CFG_FILE_CBFS)-type := payload
+$(TZQTI_CFG_FILE_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(TZQTI_CFG_FILE_CBFS)
+
+################################################################################
+TZAC_CFG_FILE := $(CALYPSO_BLOB)/ac_policy/tz_ac_config.elf
+TZAC_CFG_FILE_CBFS := $(CONFIG_CBFS_PREFIX)/tzac_cfg
+$(TZAC_CFG_FILE_CBFS)-file := $(TZAC_CFG_FILE)
+$(TZAC_CFG_FILE_CBFS)-type := payload
+$(TZAC_CFG_FILE_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(TZAC_CFG_FILE_CBFS)
+
+################################################################################
+HYPAC_CFG_FILE := $(CALYPSO_BLOB)/ac_policy/hyp_ac_config.elf
+HYPAC_CFG_FILE_CBFS := $(CONFIG_CBFS_PREFIX)/hypac_cfg
+$(HYPAC_CFG_FILE_CBFS)-file := $(HYPAC_CFG_FILE)
+$(HYPAC_CFG_FILE_CBFS)-type := payload
+$(HYPAC_CFG_FILE_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(HYPAC_CFG_FILE_CBFS)
+
+################################################################################
+# Rule to create hyp_ac_meta from hyp_ac_config.elf
+# This rule depends on hyp_ac_config.elf built and the extractor script existing.
+$(obj)/mainboard/$(MAINBOARDDIR)/hyp_ac_meta: $(CALYPSO_BLOB)/ac_policy/hyp_ac_config.elf util/qualcomm/elf_segment_extractor.py
+	@echo "Extracting ELF headers and hash table segment from $< to $@"
+	@util/qualcomm/elf_segment_extractor.py --eh --pht --hashtable $< $@
+
+HYP_AC_META_FILE := $(obj)/mainboard/$(MAINBOARDDIR)/hyp_ac_meta
+HYP_AC_META_CBFS := $(CONFIG_CBFS_PREFIX)/hyp_ac_meta
+$(HYP_AC_META_CBFS)-file := $(HYP_AC_META_FILE)
+$(HYP_AC_META_CBFS)-type := raw
+$(HYP_AC_META_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(HYP_AC_META_CBFS)
+
+endif # ifeq ($(CONFIG_ARM64_USE_SECURE_OS),y)
+################################################################################
+ifeq ($(CONFIG_QC_APDP_ENABLE),y)
+
+APDP_CBFS := $(CONFIG_CBFS_PREFIX)/apdp
+$(APDP_CBFS)-file := $(APDP_FILE)
+$(APDP_CBFS)-type := payload
+$(APDP_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(APDP_CBFS)
+
+################################################################################
+# Rule to create apdp_meta from apdp.mbn
+# This rule depends on apdp.mbn being built and the extractor script existing.
+$(obj)/mainboard/$(MAINBOARDDIR)/apdp_meta: $(APDP_FILE) util/qualcomm/elf_segment_extractor.py
+	@echo "Extracting ELF headers and hash table segment from $< to $@"
+	@util/qualcomm/elf_segment_extractor.py --eh --pht --hashtable $< $@
+
+APDP_META_FILE := $(obj)/mainboard/$(MAINBOARDDIR)/apdp_meta
+APDP_META_CBFS := $(CONFIG_CBFS_PREFIX)/apdp_meta
+$(APDP_META_CBFS)-file := $(APDP_META_FILE)
+$(APDP_META_CBFS)-type := raw
+$(APDP_META_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(APDP_META_CBFS)
+
+endif # ifeq ($(CONFIG_QC_APDP_ENABLE),y)
+################################################################################
+ifeq ($(CONFIG_QC_RAMDUMP_ENABLE),y)
+
+RAMDUMP_FILE := $(CALYPSO_BLOB)/RAMDUMP/boot/XblRamdump.elf
+RAMDUMP_CBFS := $(CONFIG_CBFS_PREFIX)/ramdump
+$(RAMDUMP_CBFS)-file := $(RAMDUMP_FILE)
+$(RAMDUMP_CBFS)-type := stage
+$(RAMDUMP_CBFS)-compression := $(CBFS_PRERAM_COMPRESS_FLAG)
+cbfs-files-y += $(RAMDUMP_CBFS)
+
+################################################################################
+# Rule to create ramdump_meta from XblRamdump.elf
+# This rule depends on XblRamdump.elf being built and the extractor script existing.
+$(obj)/mainboard/$(MAINBOARDDIR)/ramdump_meta: $(RAMDUMP_FILE) util/qualcomm/elf_segment_extractor.py
+	@echo "Extracting ELF headers and hash table segment from $< to $@"
+	@util/qualcomm/elf_segment_extractor.py --eh --pht --hashtable $< $@
+
+RAMDUMP_META_FILE := $(obj)/mainboard/$(MAINBOARDDIR)/ramdump_meta
+RAMDUMP_META_CBFS := $(CONFIG_CBFS_PREFIX)/ramdump_meta
+$(RAMDUMP_META_CBFS)-file := $(RAMDUMP_META_FILE)
+$(RAMDUMP_META_CBFS)-type := raw
+$(RAMDUMP_META_CBFS)-compression := $(CBFS_COMPRESS_FLAG)
+cbfs-files-y += $(RAMDUMP_META_CBFS)
+
+endif # ifeq ($(CONFIG_QC_RAMDUMP_ENABLE),y)
+
+endif # ifeq ($(CONFIG_USE_QC_BLOBS),y)
+
+endif # ifeq ($(CONFIG_QC_BLOBS_UPSTREAM),y)
+endif # ifeq ($(CONFIG_SOC_QUALCOMM_CALYPSO_BASE),y)

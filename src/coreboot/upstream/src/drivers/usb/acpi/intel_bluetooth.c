@@ -1,0 +1,436 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#include <acpi/acpigen.h>
+#include "chip.h"
+
+/*
+ * Intel Bluetooth DSM
+ *
+ * Check/Set Reset Delay (aa10f4e0-81ac-4233-abf6-3b2ac50e28d9)
+ * Arg2 == 0:	Return a package with the following bit set
+ * BIT(0)	Indicates whether the device supports other functions
+ * BIT(1)	Check Bluetooth reset timing
+ *
+ * Arg2 == 1:	Set the reset delay based on Arg3
+ *
+ * Arg2 == 2:	Reserved
+ *
+ * Arg2 == 3:	Set the reset method based on Arg3 (required by Linux driver)
+ * Arg3 is a 4-byte buffer: [0x01, 0x00, type, 0x00]
+ *   type 0 = WDISABLE2 (BT_RF_KILL_N) - supported by this driver
+ *   type 1 = VSEC (PCI Config Space) - not supported
+ */
+
+static void check_reset_delay(void *arg)
+{
+	acpigen_write_if_lequal_op_int(ARG1_OP, 0);
+	{
+		/* Bits 0, 1, 3: other funcs, reset timing, set reset method (Linux) */
+		acpigen_write_return_singleton_buffer(0x0b);
+	}
+	acpigen_write_else();
+	{
+		acpigen_write_return_singleton_buffer(0x00);
+	}
+	acpigen_pop_len();
+}
+
+static void set_reset_delay(void *arg)
+{
+	acpigen_write_store_op_to_namestr(ARG3_OP, "RDLY");
+}
+
+static void set_reset_method(void *arg)
+{
+	/* _RST does the reset itself (GPIO toggle or CNVi PLDR); accept. */
+	acpigen_write_return_singleton_buffer(0x01);
+}
+
+static void not_supported(void *arg)
+{
+	acpigen_write_return_singleton_buffer(0x00);
+}
+
+void (*reset_supported[])(void *) = {
+	check_reset_delay,	/* 0: capability query */
+	set_reset_delay,	/* 1: set delay */
+	not_supported,		/* 2: reserved */
+	set_reset_method,	/* 3: set reset method (required by Linux) */
+};
+void (*reset_unsupported[])(void *) = { not_supported };
+
+void acpi_device_intel_bt(const struct acpi_gpio *enable_gpio,
+			  const struct acpi_gpio *reset_gpio,
+			  const struct acpi_gpio *cnvi_bt_en_gpio,
+			  const struct acpi_gpio *cnvi_bt_if_select_gpio,
+			  bool audio_offload,
+			  bool cnvi_bluetooth)
+{
+	const bool cnvi_pldr = CONFIG(SOC_INTEL_COMMON_BLOCK_CNVI) &&
+		cnvi_bluetooth && !reset_gpio->pin_count;
+
+/*
+ *	Name (_S0W, 2)
+ */
+	acpigen_write_name_integer("_S0W", ACPI_DEVICE_SLEEP_D2);
+
+/*
+ *	Name (RDLY, 160)  // ms, matches Linux driver default
+ */
+	acpigen_write_name_integer("RDLY", 160);
+
+/*
+ *	Name (PRRS, Zero)   // only when _RST performs a PLDR
+ */
+	if (cnvi_pldr)
+		acpigen_write_name_integer("PRRS", 0);
+
+/*
+ *	Method (_DSM, 4, Serialized)
+ *	{
+ *		If ((Arg0 == ToUUID ("aa10f4e0-81ac-4233-abf6-3b2ac50e28d9")))
+ *		{
+ *			If ((Arg2 == Zero))
+ *			{
+ *				If ((Arg1 == Zero))
+ *				{
+ *					Return (Buffer (One)
+ *					{
+ *						0x03
+ *					})
+ *				}
+ *				Else
+ *				{
+ *					Return (Buffer (One)
+ *					{
+ *						0x00
+ *					})
+ *				}
+ *			}
+ *			If ((Arg2 == One))
+ *			{
+ *				RDLY = Arg3
+ *			}
+ *			Return (Zero)
+ *		}
+ *		Else
+ *		{
+ *			Return (Buffer (One)
+ *			{
+ *				0x00
+ *			})
+ *		}
+ *	}
+ */
+
+	/* btintel arms _PRR/_RST recovery only if the _DSM reports reset
+	   support, so advertise it whenever _RST resets: GPIO, or CNVi PLDR. */
+	const bool reset_available = reset_gpio->pin_count || cnvi_pldr;
+
+	struct dsm_uuid uuid_callbacks[] = {
+		DSM_UUID("aa10f4e0-81ac-4233-abf6-3b2ac50e28d9",
+			reset_available ?
+				reset_supported : reset_unsupported,
+			reset_available ?
+				ARRAY_SIZE(reset_supported) : ARRAY_SIZE(reset_unsupported),
+			NULL),
+	};
+
+	acpigen_write_dsm_uuid_arr(uuid_callbacks, ARRAY_SIZE(uuid_callbacks));
+/*
+ *	PowerResource (BTRT, 0x05, 0)
+ *	{
+ *		Method (_STA, 0, NotSerialized)
+ *		{
+ *			Return (\_SB.PCI0.GBTE())
+ *		}
+ *		Method (_ON, 0, NotSerialized)
+ *		{
+ *			If ((\_SB.PCI0.GBTE() == 1))
+ *				Return (1)
+ *			}
+ *			\_SB.PCI0.SBTE(1)
+ *		}
+ *		Method (_OFF, 0, NotSerialized)
+ *		{
+ *			\_SB.PCI0.SBTE(0)
+ *		}
+ *		Method (_RST, 0, NotSerialized)
+ *		{
+ *			Local0 = Acquire (\_SB.PCI0.CNMT, 1000)
+ *			If ((Local0 == Zero))
+ *			{
+ *				\_SB.PCI0.BTRK (Zero)
+ *				Sleep (RDLY)
+ *				\_SB.PCI0.BTRK (One)
+ *				Sleep (RDLY)
+ *				Release (\_SB.PCI0.CNMT)
+ *			}
+ *		}
+ *	}
+ */
+	acpigen_write_power_res("BTRT", 5, 0, NULL, 0);
+	{
+		acpigen_write_method("_STA", 0);
+		{
+			if (enable_gpio->pin_count) {
+				acpigen_write_store();
+				acpigen_emit_namestring("\\_SB.PCI0.GBTE");
+				acpigen_emit_byte(LOCAL0_OP);
+
+				acpigen_write_return_op(LOCAL0_OP);
+			} else {
+				acpigen_write_return_integer(1);
+			}
+		}
+		acpigen_pop_len();
+
+		acpigen_write_method("_ON", 0);
+		{
+			if (enable_gpio->pin_count) {
+				acpigen_write_store();
+				acpigen_emit_namestring("\\_SB.PCI0.GBTE");
+				acpigen_emit_byte(LOCAL0_OP);
+
+				acpigen_write_if_lequal_op_int(LOCAL0_OP, 1);
+				{
+					acpigen_write_return_integer(1);
+				}
+				acpigen_pop_len();
+
+				acpigen_emit_namestring("\\_SB.PCI0.SBTE");
+				acpigen_emit_byte(1);
+			}
+		}
+		acpigen_pop_len();
+
+		acpigen_write_method("_OFF", 0);
+		{
+			if (enable_gpio->pin_count) {
+				acpigen_emit_namestring("\\_SB.PCI0.SBTE");
+				acpigen_emit_byte(0);
+			}
+		}
+		acpigen_pop_len();
+
+		acpigen_write_method("_RST", 0);
+		{
+			if (reset_gpio->pin_count) {
+				acpigen_write_store();
+				acpigen_write_acquire("\\_SB.PCI0.CNMT", 1000);
+				acpigen_emit_byte(LOCAL0_OP);
+
+				acpigen_write_if_lequal_op_int(LOCAL0_OP, 0);
+				{
+					/* Pulse optional CNVi BTEN / BT_IF_SELECT with reset. */
+					if (cnvi_bt_en_gpio && cnvi_bt_en_gpio->pin_count)
+						acpigen_disable_tx_gpio(cnvi_bt_en_gpio);
+					if (cnvi_bt_if_select_gpio &&
+					    cnvi_bt_if_select_gpio->pin_count)
+						acpigen_disable_tx_gpio(cnvi_bt_if_select_gpio);
+
+					acpigen_emit_namestring("\\_SB.PCI0.BTRK");
+					acpigen_emit_byte(0);
+
+					acpigen_emit_ext_op(SLEEP_OP);
+					acpigen_emit_namestring("RDLY");
+
+					if (cnvi_bt_en_gpio && cnvi_bt_en_gpio->pin_count)
+						acpigen_enable_tx_gpio(cnvi_bt_en_gpio);
+					if (cnvi_bt_if_select_gpio &&
+					    cnvi_bt_if_select_gpio->pin_count)
+						acpigen_enable_tx_gpio(cnvi_bt_if_select_gpio);
+
+					acpigen_emit_namestring("\\_SB.PCI0.BTRK");
+					acpigen_emit_byte(1);
+
+					acpigen_emit_ext_op(SLEEP_OP);
+					acpigen_emit_namestring("RDLY");
+
+					acpigen_write_release("\\_SB.PCI0.CNMT");
+				}
+				acpigen_pop_len();
+			}
+#if CONFIG(SOC_INTEL_COMMON_BLOCK_CNVI)
+			/* The #if only avoids an unresolved symbol on non-CNVi boards. */
+			else if (cnvi_pldr)
+				acpi_device_intel_bt_pldr_reset();
+#endif
+		}
+		acpigen_pop_len();
+	}
+	acpigen_write_power_res_end();
+
+/*
+ *	Name (_PRR, Package (0x01)
+ *	{
+ *		BTRT
+ *	})
+ */
+	acpigen_write_name("_PRR");
+	{
+		acpigen_write_package(1);
+		acpigen_emit_namestring("BTRT");
+	}
+	acpigen_pop_len();
+
+/*
+ *	Name (_PR0, Package (0x01)
+ *	{
+ *		BTRT
+ *	})
+ */
+	acpigen_write_name("_PR0");
+	{
+		acpigen_write_package(1);
+		acpigen_emit_namestring("BTRT");
+	}
+	acpigen_pop_len();
+
+/*
+ *	Name (_PR3, Package (0x01)
+ *	{
+ *		BTRT
+ *	})
+ */
+	acpigen_write_name("_PR3");
+	{
+		acpigen_write_package(1);
+		acpigen_emit_namestring("BTRT");
+	}
+	acpigen_pop_len();
+
+/*
+ *	Method (AOLD, 0, NotSerialized)
+ *	{
+ *		Name (AODS, Package (0x03)
+ *		{
+ *			Zero,
+ *			0x12,
+ *			Zero	// Audio Offload - 0: Disabled
+ *						   1: Enabled
+ *		})
+ *		Return (AODS)
+ *	}
+ */
+	acpigen_write_method("AOLD", 0);
+	{
+		acpigen_write_name("AODS");
+		acpigen_write_package(3);
+		{
+			acpigen_write_integer(0);
+			acpigen_write_integer(0x12);
+			acpigen_write_integer(audio_offload);
+		}
+		acpigen_pop_len();
+
+		acpigen_write_return_namestr("AODS");
+	}
+	acpigen_pop_len();
+}
+
+void acpi_device_intel_bt_common(const struct acpi_gpio *enable_gpio,
+				 const struct acpi_gpio *reset_gpio)
+{
+	acpigen_write_scope("\\_SB.PCI0");
+/*
+ *	Mutex (CNMT, 0)
+ */
+	acpigen_write_mutex("CNMT", 0);
+
+/*
+ *	Method (SBTE, 1, NotSerialized)
+ *	{
+ *		If (Arg0 == 1)
+ *		{
+ *			STXS(enable_gpio)
+ *		} Else {
+ *			CTXS(enable_gpio)
+ *		}
+ *	}
+ */
+	acpigen_write_method("SBTE", 1);
+	{
+		if (enable_gpio->pin_count) {
+			acpigen_write_if_lequal_op_int(ARG0_OP, 1);
+			{
+				acpigen_enable_tx_gpio(enable_gpio);
+			}
+			acpigen_write_else();
+			{
+				acpigen_disable_tx_gpio(enable_gpio);
+			}
+			acpigen_pop_len();
+		}
+	}
+	acpigen_pop_len();
+
+/*
+ *	Method (GBTE, 0, NotSerialized)
+ *	{
+ *		Return (GTXS (enable_gpio))
+ *	}
+ */
+	acpigen_write_method("GBTE", 0);
+	{
+		if (enable_gpio->pin_count) {
+			acpigen_get_tx_gpio(enable_gpio);
+			acpigen_write_return_op(LOCAL0_OP);
+		} else {
+			acpigen_write_return_integer(0);
+		}
+	}
+	acpigen_pop_len();
+
+/*
+ *	Method (BTRK, 1, NotSerialized)
+ *	{
+ *		If (Arg0 == 1)
+ *		{
+ *			STXS (reset_gpio)
+ *		} Else {
+ *			CTXS (reset_gpio)
+ *		}
+ *	}
+ */
+	acpigen_write_method("BTRK", 1);
+	{
+		if (reset_gpio->pin_count) {
+			acpigen_write_if_lequal_op_int(ARG0_OP, 1);
+			{
+				/* De-assert reset */
+				acpigen_disable_tx_gpio(reset_gpio);
+			}
+			acpigen_write_else();
+			{
+				/* Assert Reset */
+				acpigen_enable_tx_gpio(reset_gpio);
+			}
+			acpigen_pop_len();
+		}
+	}
+	acpigen_pop_len();
+
+/*
+ *	Method (GBTR, 0, NotSerialized)
+ *	{
+ *		Local0 = GTXS (reset_gpio)
+ *		Local0 ^= One
+ *		Return (Local0)
+ *	}
+ */
+	acpigen_write_method("GBTR", 0);
+	{
+		if (reset_gpio->pin_count) {
+			/* Return 1 if not in reset */
+			acpigen_get_tx_gpio(reset_gpio);
+			acpigen_write_xor(LOCAL0_OP, 1, LOCAL0_OP);
+			acpigen_write_return_op(LOCAL0_OP);
+		} else {
+			acpigen_write_return_op(0);
+		}
+	}
+	acpigen_pop_len();
+
+	acpigen_write_scope_end();
+}

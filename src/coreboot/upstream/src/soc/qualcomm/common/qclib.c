@@ -1,0 +1,650 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#include <assert.h>
+#include <arch/mmu.h>
+#include <cbfs.h>
+#include <cbmem.h>
+#include <commonlib/bsd/mem_chip_info.h>
+#include <commonlib/region.h>
+#include <console/cbmem_console.h>
+#include <console/console.h>
+#include <fmap.h>
+#include <mrc_cache.h>
+#include <option.h>
+#include <reset.h>
+#include <security/vboot/misc.h>
+#include <soc/aop_common.h>
+#include <soc/cdt.h>
+#include <soc/mmu.h>
+#include <soc/mmu_common.h>
+#include <soc/qclib_common.h>
+#include <soc/symbols_common.h>
+#include <string.h>
+#include <timestamp.h>
+#include <vb2_api.h>
+
+#define QCLIB_VERSION 0
+
+/* store QcLib return data until CBMEM_CREATION_HOOK runs */
+static struct mem_chip_info *mem_chip_info;
+
+static void dump_mem_chip_info(const struct mem_chip_info *info)
+{
+	if (!CONFIG(QC_DUMP_MEMCHIP_INFO))
+		return;
+
+	printk(BIOS_DEBUG, "MEM Chip Info: version=%d, entries=%d\n",
+	       info->struct_version, info->num_entries);
+
+	for (int i = 0; i < info->num_entries; i++) {
+		const struct mem_chip_entry *e = &info->entries[i];
+
+		printk(BIOS_DEBUG, "  Entry [%d]:\n", i);
+		printk(BIOS_DEBUG, "    Channel: %d, Rank: %d\n", e->channel, e->rank);
+		printk(BIOS_DEBUG, "    Type: %d, Channel I/O Width: %d\n",
+		       e->type, e->channel_io_width);
+		printk(BIOS_DEBUG, "    Density: %u Mbits, Chip I/O Width: %d\n",
+		       e->density_mbits, e->io_width);
+		printk(BIOS_DEBUG, "    Manufacturer ID: 0x%02x\n",
+		       e->manufacturer_id);
+		printk(BIOS_DEBUG, "    Revision ID: 0x%02x 0x%02x\n",
+		       e->revision_id[0], e->revision_id[1]);
+		printk(BIOS_DEBUG, "    Serial ID: ");
+		for (int j = 0; j < 8; j++)
+			printk(BIOS_DEBUG, "%02x", e->serial_id[j]);
+
+		printk(BIOS_DEBUG, "\n");
+	}
+}
+
+/*
+ * Filter out undefined memory chip entries.
+ *
+ * This function performs an in-place "collapse" of the entries array by
+ * removing all entries marked as MEM_CHIP_UNDEFINED. It maintains the
+ * relative order of valid entries and updates the total count (num_entries)
+ * once the filtering is complete.
+ */
+static void process_mem_chip_information(struct mem_chip_info *info)
+{
+	if (!CONFIG(QC_SANITIZE_MEMCHIP_INFO))
+		return;
+
+	int next_valid = 0;
+
+	for (int i = 0; i < info->num_entries; i++) {
+		/* Check if the entry is valid/non-empty */
+		if (info->entries[i].type != MEM_CHIP_UNDEFINED) {
+			if (next_valid != i)
+				info->entries[next_valid] = info->entries[i];
+
+			next_valid++;
+		}
+	}
+
+	info->num_entries = next_valid;
+}
+
+static void write_mem_chip_information(struct qclib_cb_if_table_entry *te)
+{
+	struct mem_chip_info *info = (void *)te->blob_address;
+
+	if (!info || te->size < sizeof(struct mem_chip_info)) {
+		printk(BIOS_WARNING, "mem_chip_info buffer too small for header (%x)\n", te->size);
+		return;
+	}
+
+	if (te->size < mem_chip_info_size(info->num_entries)) {
+		printk(BIOS_WARNING, "mem_chip_info buffer (%x) too small for %u entries (%zu)\n",
+		       te->size, info->num_entries, mem_chip_info_size(info->num_entries));
+		return;
+	}
+
+	process_mem_chip_information(info);
+	dump_mem_chip_info(info);
+
+	/* Save mem_chip_info in global variable ahead of hook running */
+	mem_chip_info = info;
+}
+
+static void add_mem_chip_info(int unused)
+{
+	void *mem_region_base = NULL;
+	size_t size;
+
+	if (!mem_chip_info || !mem_chip_info->num_entries ||
+	    mem_chip_info->struct_version != MEM_CHIP_STRUCT_VERSION) {
+		printk(BIOS_ERR, "Did not receive valid mem_chip_info from QcLib!\n");
+		return;
+	}
+
+	size = mem_chip_info_size(mem_chip_info->num_entries);
+
+	/* Add cbmem table */
+	mem_region_base = cbmem_add(CBMEM_ID_MEM_CHIP_INFO, size);
+	ASSERT(mem_region_base != NULL);
+
+	/* Migrate the data into CBMEM */
+	memcpy(mem_region_base, mem_chip_info, size);
+}
+
+CBMEM_CREATION_HOOK(add_mem_chip_info);
+
+static int qdutt_find_flash(size_t *offset, size_t *size)
+{
+	const char *name = "RW_QDUTT";
+	struct region_device rdev;
+
+	/* Find the region in FMAP */
+	if (fmap_locate_area_as_rdev_rw(name, &rdev)) {
+		printk(BIOS_ERR, "Unable to find FMAP region %s\n", name);
+		return -1;
+	}
+
+	*offset = region_device_offset(&rdev);
+	*size = region_device_sz(&rdev);
+
+	printk(BIOS_INFO, "QDUTT found at offset 0x%zx size 0x%zx\n",
+		*offset, *size);
+
+	return 0;
+}
+
+struct qclib_cb_if_table qclib_cb_if_table;
+
+static inline void init_qclib_cb_if_table(struct qclib_cb_if_table *tbl)
+{
+	if (!tbl)
+		return;
+
+	memcpy(tbl->magic, QCLIB_MAGIC_NUMBER, sizeof(tbl->magic));
+	tbl->version = QCLIB_INTERFACE_VERSION;
+	tbl->num_entries = 0;
+	tbl->max_entries = QCLIB_MAX_NUMBER_OF_ENTRIES;
+	tbl->global_attributes = 0;
+	tbl->reserved = 0;
+}
+
+__weak bool qclib_do_load_soccp_fw(void)
+{
+	if (!CONFIG(QC_SOCCP_ENABLE))
+		return false;
+
+	return true;
+}
+
+const char *qclib_file_default(enum qclib_cbfs_file file)
+{
+	switch (file) {
+	case QCLIB_CBFS_PMICCFG:
+		return CONFIG_CBFS_PREFIX "/pmiccfg";
+	case QCLIB_CBFS_QCSDI:
+		return CONFIG_CBFS_PREFIX "/qcsdi";
+	case QCLIB_CBFS_QCLIB:
+		return CONFIG_CBFS_PREFIX "/qclib";
+	case QCLIB_CBFS_DCB:
+		return CONFIG_CBFS_PREFIX "/dcb";
+	case QCLIB_CBFS_DELTA_DCB:
+		return CONFIG_CBFS_PREFIX "/delta_dcb";
+	case QCLIB_CBFS_DTB:
+		return CONFIG_CBFS_PREFIX "/dtb";
+	case QCLIB_CBFS_CPR:
+		return CONFIG_CBFS_PREFIX "/cpr";
+	case QCLIB_CBFS_SHRM_META:
+		return CONFIG_CBFS_PREFIX "/shrm_meta";
+	case QCLIB_CBFS_AOP_META:
+		return AOP_CBFS_NAME("aop_meta");
+	case QCLIB_CBFS_AOP_DEVCFG_META:
+		return AOP_CBFS_NAME("aop_devcfg_meta");
+	case QCLIB_CBFS_APDP_META:
+		return CONFIG_CBFS_PREFIX "/apdp_meta";
+	case QCLIB_CBFS_RAMDUMP_META:
+		return CONFIG_CBFS_PREFIX "/ramdump_meta";
+	case QCLIB_CBFS_HYP_AC_META:
+		return CONFIG_CBFS_PREFIX "/hyp_ac_meta";
+	case QCLIB_CBFS_SOCCP_META:
+		return CONFIG_CBFS_PREFIX "/soccp_meta";
+	case QCLIB_CBFS_SOCCP_DTB_META:
+		return CONFIG_CBFS_PREFIX "/soccp_dtb_meta";
+	default:
+		die("unknown QcLib file %d", file);
+	}
+}
+
+__weak const char *qclib_override_soc_file(enum qclib_cbfs_file file)
+{
+	return NULL;
+}
+
+const char *qclib_file(enum qclib_cbfs_file file)
+{
+	const char *name = qclib_override_soc_file(file);
+	return name ?: qclib_file_default(file);
+}
+
+void qclib_add_if_table_entry(const char *name, void *base,
+				uint32_t size, uint32_t attrs)
+{
+	struct qclib_cb_if_table_entry *te =
+		&qclib_cb_if_table.te[qclib_cb_if_table.num_entries++];
+	assert(qclib_cb_if_table.num_entries <= qclib_cb_if_table.max_entries);
+	strncpy(te->name, name, sizeof(te->name) - 1);
+	te->blob_address = (uintptr_t)base;
+	te->size = size;
+	te->blob_attributes = attrs;
+}
+
+static void write_ddr_information(struct qclib_cb_if_table_entry *te)
+{
+	uint64_t ddr_size;
+
+	/* Save DDR info in SRAM region to share with ramstage */
+	ddr_size = te->size;
+	*ddr_region = region_create(te->blob_address, ddr_size * MiB);
+
+	/* Use DDR info to configure MMU */
+	qc_mmu_dram_config_post_dram_init(region_sz(ddr_region));
+}
+
+static void write_qclib_log_to_cbmemc(struct qclib_cb_if_table_entry *te)
+{
+	int i;
+	char *ptr = (char *)te->blob_address;
+
+	for (i = 0; i < te->size; i++) {
+		char c = *ptr++;
+		if (c != '\r')
+			__cbmemc_tx_byte(c);
+	}
+}
+
+static void write_table_entry(struct qclib_cb_if_table_entry *te)
+{
+	printk(BIOS_DEBUG, "%s: table entry: %s\n", __func__, te->name);
+
+	if (!strncmp(QCLIB_TE_DDR_INFORMATION, te->name,
+			sizeof(te->name))) {
+		write_ddr_information(te);
+
+	} else if (!strncmp(QCLIB_TE_DDR_TRAINING_DATA, te->name,
+			sizeof(te->name))) {
+		assert(!mrc_cache_stash_data(MRC_TRAINING_DATA, QCLIB_VERSION,
+					     (const void *)te->blob_address, te->size));
+
+	} else if (!strncmp(QCLIB_TE_LIMITS_CFG_DATA, te->name,
+			sizeof(te->name))) {
+		assert(fmap_overwrite_area(QCLIB_FR_LIMITS_CFG_DATA,
+			(const void *)te->blob_address, te->size));
+
+	} else if (!strncmp(QCLIB_TE_QCLIB_LOG_BUFFER, te->name,
+			sizeof(te->name))) {
+		write_qclib_log_to_cbmemc(te);
+
+	} else if (!strncmp(QCLIB_TE_MEM_CHIP_INFO, te->name,
+			sizeof(te->name))) {
+		write_mem_chip_information(te);
+
+	} else {
+		printk(BIOS_WARNING, "%s write not implemented\n", te->name);
+		printk(BIOS_WARNING, "  blob_address[%llx]..size[%x]\n",
+			te->blob_address, te->size);
+	}
+}
+
+static void dump_te_table(void)
+{
+	struct qclib_cb_if_table_entry *te;
+	int i;
+
+	for (i = 0; i < qclib_cb_if_table.num_entries; i++) {
+		te = &qclib_cb_if_table.te[i];
+		printk(BIOS_DEBUG, "[%s][%llx][%x][%x]\n",
+			te->name, te->blob_address,
+			te->size, te->blob_attributes);
+	}
+}
+
+__weak int qclib_soc_override(struct qclib_cb_if_table *table)
+{
+	ssize_t data_size;
+
+	/* Attempt to load DCB Blob */
+	data_size = cbfs_load(qclib_file(QCLIB_CBFS_DCB), _dcb, REGION_SIZE(dcb));
+	if (!data_size) {
+		printk(BIOS_ERR, "[%s] /dcb failed\n", __func__);
+		return -1;
+	}
+	qclib_add_if_table_entry(QCLIB_TE_DCB_SETTINGS, _dcb, data_size, 0);
+
+	return 0;
+}
+
+__weak bool qclib_check_dload_mode(void)
+{
+	return false;
+}
+
+static bool qclib_debug_log_level(void)
+{
+	return get_uint_option("qclib_debug_level", 1);
+}
+
+static bool qc_soc_debug_enabled(void)
+{
+	return !(CONFIG(QC_SKIP_SOC_DEBUG_FEATURES_IN_RECOVERY) && CONFIG(VBOOT) &&
+		vboot_recovery_mode_enabled());
+}
+
+struct prog qclib; /* This will be re-used by qclib_rerun() */
+
+static void qclib_prepare_and_run(void)
+{
+	struct mmu_context pre_qclib_mmu_context;
+	int i;
+
+	/* output area, QCLib copies console log buffer out */
+	if (CONFIG(CONSOLE_CBMEM))
+		qclib_add_if_table_entry(QCLIB_TE_QCLIB_LOG_BUFFER,
+				_qclib_serial_log,
+				REGION_SIZE(qclib_serial_log), 0);
+
+	/* Enable QCLib serial output, if below condition is met */
+	if (CONFIG(CONSOLE_SERIAL) && qclib_debug_log_level())
+		qclib_cb_if_table.global_attributes |=
+			QCLIB_GA_ENABLE_UART_LOGGING;
+
+	printk(BIOS_DEBUG, "%s: Dumping table entries (BEFORE QCLib):\n", __func__);
+	dump_te_table();
+
+	printk(BIOS_DEBUG, "Global Attributes[%#x]..Table Entries Count[%d]\n",
+		qclib_cb_if_table.global_attributes,
+		qclib_cb_if_table.num_entries);
+	printk(BIOS_DEBUG, "Jumping to QCLib code at %p(%p)\n",
+		prog_entry(&qclib), prog_entry_arg(&qclib));
+
+	/*
+	 * Backup MMU context and disable the MMU before executing QCLib,
+	 * unless the platform handles QCLib with the MMU enabled.
+	 * mmu_disable() also handles required cache maintenance.
+	 */
+	if (!CONFIG(SOC_QUALCOMM_QCLIB_SKIP_MMU_TOGGLE)) {
+		mmu_save_context(&pre_qclib_mmu_context);
+		mmu_disable();
+	}
+
+	prog_run(&qclib);
+
+	printk(BIOS_DEBUG, "%s: Dumping table entries (AFTER QCLib):\n", __func__);
+	dump_te_table();
+
+	if (qclib_cb_if_table.num_entries > QCLIB_MAX_NUMBER_OF_ENTRIES) {
+		printk(BIOS_ERR, "QcLib returned invalid num_entries=%u,",
+			qclib_cb_if_table.num_entries);
+		printk(BIOS_ERR, " clamping to %d\n", QCLIB_MAX_NUMBER_OF_ENTRIES);
+		qclib_cb_if_table.num_entries = QCLIB_MAX_NUMBER_OF_ENTRIES;
+	}
+
+	/*
+	 * Post-QCLib execution: If the MMU was toggled off, ensure it is
+	 * cleanly disabled (flushed/invalidated) before restoring the
+	 * previous context and re-enabling. Otherwise, just restore context.
+	 */
+	if (!CONFIG(SOC_QUALCOMM_QCLIB_SKIP_MMU_TOGGLE)) {
+		mmu_disable();
+		mmu_restore_context(&pre_qclib_mmu_context);
+		mmu_enable();
+	}
+
+	if (qclib_cb_if_table.global_attributes & QCLIB_GA_FORCE_COLD_REBOOT) {
+		printk(BIOS_NOTICE, "QcLib requested cold reboot\n");
+		board_reset();
+	}
+
+	/* step through I/F table, handling return values */
+	for (i = 0; i < qclib_cb_if_table.num_entries; i++)
+		if (qclib_cb_if_table.te[i].blob_attributes &
+				QCLIB_BA_SAVE_TO_STORAGE)
+			write_table_entry(&qclib_cb_if_table.te[i]);
+
+	printk(BIOS_DEBUG, "QCLib completed\n\n\n");
+}
+
+void qclib_load_and_run(void)
+{
+	ssize_t data_size;
+
+	timestamp_add_now(TS_QUALCOMM_QCLIB_INIT_START);
+
+	if (CONFIG(QC_QDUTT_ENABLE)) {
+		size_t qdutt_offset, qdutt_size;
+		if (qdutt_find_flash(&qdutt_offset, &qdutt_size) < 0)
+			return;
+	}
+
+	/* zero ddr_information SRAM region, needs new data each boot */
+	memset(ddr_region, 0, sizeof(struct region));
+
+	init_qclib_cb_if_table(&qclib_cb_if_table);
+
+	/* output area, QCLib fills in DDR details */
+	qclib_add_if_table_entry(QCLIB_TE_DDR_INFORMATION, NULL, 0, 0);
+
+	/* Attempt to load DDR Training Blob */
+	data_size = mrc_cache_load_current(MRC_TRAINING_DATA, QCLIB_VERSION,
+					   _ddr_training, REGION_SIZE(ddr_training));
+	if (data_size < 0) {
+		printk(BIOS_WARNING, "qclib: Invalid MRC data in flash (size: %#zx, expected: %#zx)\n",
+		       data_size, REGION_SIZE(ddr_training));
+		memset(_ddr_training, 0, REGION_SIZE(ddr_training));
+		data_size = REGION_SIZE(ddr_training);
+	}
+	qclib_add_if_table_entry(QCLIB_TE_DDR_TRAINING_DATA,
+			_ddr_training, data_size, 0);
+
+	/* Address and size of this entry will be filled in by QcLib. */
+	if (!CONFIG(QC_MEMCHIP_INFO_ON_RERUN))
+		qclib_add_if_table_entry(QCLIB_TE_MEM_CHIP_INFO, NULL, 0, 0);
+
+	if (_pmic) {
+		/* Attempt to load PMICCFG Blob */
+		data_size = cbfs_load(qclib_file(QCLIB_CBFS_PMICCFG),
+				_pmic, REGION_SIZE(pmic));
+		if (!data_size) {
+			printk(BIOS_ERR, "[%s] /pmiccfg failed\n", __func__);
+			goto fail;
+		}
+		qclib_add_if_table_entry(QCLIB_TE_PMIC_SETTINGS, _pmic, data_size, 0);
+	}
+
+	if (CONFIG(QC_DELTA_DCB_ENABLE)) {
+		/* Attempt to load DELTA_DCB Blob */
+		data_size = cbfs_load(qclib_file(QCLIB_CBFS_DELTA_DCB),
+				_qc_blob_meta_1, REGION_SIZE(qc_blob_meta_1));
+		if (!data_size) {
+			printk(BIOS_ERR, "[%s] /delta_dcb failed\n", __func__);
+			goto fail;
+		}
+		qclib_add_if_table_entry(QCLIB_TE_DELTA_DCB_SETTINGS, _qc_blob_meta_1, data_size, 0);
+	}
+
+	if (CONFIG(QC_SDI_ENABLE) && (!CONFIG(VBOOT) ||
+		!vboot_is_gbb_flag_set(VB2_GBB_FLAG_RUNNING_FAFT))) {
+		struct prog qcsdi =
+			PROG_INIT(PROG_REFCODE,
+				qclib_file(QCLIB_CBFS_QCSDI));
+
+		/* Attempt to load QCSDI elf */
+		if (cbfs_prog_stage_load(&qcsdi))
+			goto fail;
+
+		qclib_add_if_table_entry(QCLIB_TE_QCSDI,
+			prog_entry(&qcsdi), prog_size(&qcsdi), 0);
+		printk(BIOS_INFO, "qcsdi.entry[%p]\n", qcsdi.entry);
+	}
+
+	/* hook for SoC specific binary blob loads */
+	if (qclib_soc_override(&qclib_cb_if_table)) {
+		printk(BIOS_ERR, "qclib_soc_override failed\n");
+		goto fail;
+	}
+
+	/* Load APDP image */
+	if (CONFIG(QC_APDP_ENABLE) && qc_soc_debug_enabled()) {
+		struct prog apdp_prog =
+				PROG_INIT(PROG_PAYLOAD, CONFIG_CBFS_PREFIX "/apdp");
+
+		if (!selfload(&apdp_prog))
+			die("SOC image: APDP load failed");
+
+		/* Attempt to load apdp_meta Blob. */
+		data_size = cbfs_load(qclib_file(QCLIB_CBFS_APDP_META),
+				_apdp_ramdump_meta, REGION_SIZE(apdp_ramdump_meta));
+		if (!data_size) {
+			printk(BIOS_ERR,
+				"[%s] /apdp_meta not loaded\n"
+				"apdp_meta is mandatory for APDP authentication; failure is fatal\n"
+				, __func__);
+			goto fail;
+		}
+
+		qclib_add_if_table_entry(QCLIB_TE_APDP_META_SETTINGS, _apdp_ramdump_meta, data_size, 0);
+	}
+
+	if (CONFIG(SOC_QUALCOMM_CDT)) {
+		data_size = cdt_read(_cdt_data, REGION_SIZE(cdt_data));
+		if (data_size > 0)
+			qclib_add_if_table_entry(QCLIB_TE_CDT_SETTINGS, _cdt_data, data_size, 0);
+	}
+
+	/* Attempt to load QCLib elf */
+	qclib = (struct prog)
+		PROG_INIT(PROG_REFCODE, qclib_file(QCLIB_CBFS_QCLIB));
+
+	if (cbfs_prog_stage_load(&qclib))
+		goto fail;
+
+	prog_set_entry(&qclib, prog_entry(&qclib), &qclib_cb_if_table);
+
+	/* Set up the system and jump into QcLib */
+	printk(BIOS_DEBUG, "\n\n\nEnter QcLib to Initialize DDR and bring up SHRM\n");
+	qclib_prepare_and_run();
+
+	/* confirm that we received valid ddr information from QCLib */
+	assert((uintptr_t)_dram == region_offset(ddr_region) &&
+		region_sz(ddr_region) >= (u8 *)cbmem_top() - _dram);
+
+	timestamp_add_now(TS_QUALCOMM_QCLIB_INIT_END);
+	return;
+
+fail:
+	die("Couldn't run QCLib.\n");
+}
+
+void qclib_rerun(void)
+{
+	timestamp_add_now(TS_QUALCOMM_QCLIB_REINIT_START);
+
+	ssize_t data_size;
+
+	assert(prog_type(&qclib) == PROG_REFCODE)
+
+	init_qclib_cb_if_table(&qclib_cb_if_table);
+
+	if(!qclib_check_dload_mode()){
+		struct prog aop_cfg_fw_prog = PROG_INIT(PROG_PAYLOAD, AOP_CBFS_NAME("aop_cfg"));
+
+		if (!selfload(&aop_cfg_fw_prog))
+			die("SOC image: AOP load failed");
+
+		/* Attempt to load aop_meta Blob (reuse the qc_blob_meta region). */
+		data_size = cbfs_load(qclib_file(QCLIB_CBFS_AOP_META),
+				_qc_blob_meta, REGION_SIZE(qc_blob_meta));
+		if (!data_size) {
+			printk(BIOS_ERR, "[%s] /aop_meta failed\n", __func__);
+			goto fail;
+		}
+
+		qclib_add_if_table_entry(QCLIB_TE_AOP_META_SETTINGS, _qc_blob_meta, data_size, 0);
+
+		/* Attempt to load aop_devcfg_meta Blob. */
+		data_size = cbfs_load(qclib_file(QCLIB_CBFS_AOP_DEVCFG_META),
+				_qc_blob_meta_1, REGION_SIZE(qc_blob_meta_1));
+		if (!data_size) {
+			printk(BIOS_ERR, "[%s] /aop_devcfg_meta failed\n", __func__);
+			goto fail;
+		}
+
+		qclib_add_if_table_entry(QCLIB_TE_AOP_DEVCFG_META_SETTINGS, _qc_blob_meta_1, data_size, 0);
+
+		if (CONFIG(QC_HYP_AC_CFG_PRERAM)) {
+			/* Attempt to load hyp_ac_meta Blob. */
+			data_size = cbfs_load(qclib_file(QCLIB_CBFS_HYP_AC_META),
+					_dram_hyp_ac_meta, REGION_SIZE(dram_hyp_ac_meta));
+			if (!data_size) {
+				printk(BIOS_ERR, "[%s] /dram_hyp_ac_meta failed\n", __func__);
+				goto fail;
+			}
+
+			qclib_add_if_table_entry(QCLIB_TE_HYP_AC_META_SETTINGS, _dram_hyp_ac_meta, data_size, 0);
+		}
+
+		if (CONFIG(QC_SOCCP_ENABLE) && qclib_do_load_soccp_fw()) {
+			/* Attempt to load soccp_meta Blob. */
+			data_size = cbfs_load(qclib_file(QCLIB_CBFS_SOCCP_META),
+					_dram_soccp_meta, REGION_SIZE(dram_soccp_meta));
+			if (!data_size) {
+				printk(BIOS_ERR, "[%s] //dram_soccp_meta failed\n", __func__);
+				goto fail;
+			}
+
+			qclib_add_if_table_entry(QCLIB_TE_SOCCP_META_SETTINGS, _dram_soccp_meta, data_size, 0);
+
+			/* Attempt to load soccp_dtb_meta Blob. */
+			data_size = cbfs_load(qclib_file(QCLIB_CBFS_SOCCP_DTB_META),
+					_dram_soccp_dtb_meta, REGION_SIZE(dram_soccp_dtb_meta));
+			if (!data_size) {
+				printk(BIOS_ERR, "[%s] /dram_soccp_dtb_meta failed\n", __func__);
+				goto fail;
+			}
+
+			qclib_add_if_table_entry(QCLIB_TE_SOCCP_DTB_META_SETTINGS, _dram_soccp_dtb_meta, data_size, 0);
+
+		}
+	}
+
+	if (CONFIG(QC_RAMDUMP_ENABLE) && qc_soc_debug_enabled() && qclib_check_dload_mode()) {
+		struct prog ramdump_prog =
+				PROG_INIT(PROG_REFCODE, CONFIG_CBFS_PREFIX "/ramdump");
+
+		if (cbfs_prog_stage_load(&ramdump_prog))
+			die("SOC image: ramdump load failed");
+
+		/* Attempt to load ramdump_meta Blob. */
+		data_size = cbfs_load(qclib_file(QCLIB_CBFS_RAMDUMP_META),
+				_apdp_ramdump_meta, REGION_SIZE(apdp_ramdump_meta));
+		if (!data_size) {
+			printk(BIOS_ERR,
+			       "[%s] /ramdump_meta not loaded\n"
+			       "Ramdump will not be captured for crash analysis\n",
+			       __func__);
+
+			goto fail;
+		}
+
+		qclib_add_if_table_entry(QCLIB_TE_RAMDUMP_META_SETTINGS, _apdp_ramdump_meta, data_size, 0);
+	}
+
+	/* Address and size of this entry will be filled in by QcLib. */
+	if (CONFIG(QC_MEMCHIP_INFO_ON_RERUN))
+		qclib_add_if_table_entry(QCLIB_TE_MEM_CHIP_INFO, NULL, 0, 0);
+
+	/* Set up the system and jump into QcLib */
+	printk(BIOS_DEBUG, "\n\n\nRe-enter QCLib to bring up AOP\n");
+	qclib_prepare_and_run();
+
+	timestamp_add_now(TS_QUALCOMM_QCLIB_REINIT_END);
+	return;
+
+fail:
+	die("Couldn't reload QCLib.\n");
+}

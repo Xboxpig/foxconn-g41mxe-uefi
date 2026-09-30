@@ -1,0 +1,18 @@
+{
+  "files": {
+    ".harness/runtime/harness.py": "d79b3e18429ef25a802ffee7fba0fb30b25db506288c7a86c0f148def9925fb5",
+    ".harness/runtime/harnesslib.py": "b1e82cce9042166fafbaceb8cd9bac7ce5931209a5d190680f6b9b91ffb24538",
+    ".harness/runtime/model-manifest.json": "5e73b05dd417a35452420ea07dd54894fb7b3ea55b75dc4f85222447867103e1",
+    ".harness/runtime/requirements.lock": "2e07eca4717f94fa944ba1a3f3e2d6f4f16782a26e33c975e7f6fd807dd9eece"
+  },
+  "harness_version": "3.0.0-candidate.1",
+  "local_extensions": [
+    {
+      "id": "g41mxe-public-fixtures-v1",
+      "file": ".harness/runtime/harnesslib.py",
+      "base_sha256": "2d53e8e037371f50c706eabb0361a635b2b254edd49556ed7854bf8b43914035",
+      "tests": "tests/unit/test_harness_fixtures.py",
+      "documentation": "docs/PORTING/coreboot-edk2/source-build-boundaries.md"
+    }
+  ]
+}

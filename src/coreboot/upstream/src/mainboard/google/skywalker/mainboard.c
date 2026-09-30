@@ -1,0 +1,220 @@
+/* SPDX-License-Identifier: GPL-2.0-only OR MIT */
+
+#include <baseboard/gpio.h>
+#include <baseboard/panel.h>
+#include <baseboard/storage.h>
+#include <boot/coreboot_tables.h>
+#include <bootmode.h>
+#include <commonlib/coreboot_tables.h>
+#include <commonlib/helpers.h>
+#include <commonlib/mipi/cmd.h>
+#include <device/device.h>
+#include <device/mmio.h>
+#include <fw_config.h>
+#include <gpio.h>
+#include <soc/bl31.h>
+#include <soc/cpu_id.h>
+#include <soc/display.h>
+#include <soc/dpm_v2.h>
+#include <soc/i2c.h>
+#include <soc/msdc.h>
+#include <soc/mt6359p.h>
+#include <soc/mtcmos.h>
+#include <soc/spm_common.h>
+#include <soc/storage.h>
+#include <soc/usb.h>
+#include <vendorcode/google/chromeos/chromeos.h>
+
+#define AFE_SE_SECURE_CON1	(AUDIO_BASE + 0x5634)
+
+static void setup_i2s_speaker(void)
+{
+	gpio_set_mode(GPIO_I2S_SPKR_BCK, GPIO_FUNC(DMIC0_DAT0, I2SOUT1_BCK));
+	gpio_set_mode(GPIO_I2S_SPKR_LRCK, GPIO_FUNC(DMIC1_CLK, I2SOUT1_LRCK));
+	gpio_set_mode(GPIO_I2S_SPKR_DO, GPIO_FUNC(DMIC1_DAT0, I2SOUT1_DO));
+
+	printk(BIOS_INFO, "%s: I2S configuration done\n", __func__);
+}
+
+static void configure_rt9123_rt1019(void)
+{
+	/* Set the SOC corresponding pin to I2S related function */
+	setup_i2s_speaker();
+
+	printk(BIOS_INFO, "%s: AMP configuration done\n", __func__);
+}
+
+static void configure_cs35l51(void)
+{
+	/* Set the SOC corresponding pin to I2S related function */
+	setup_i2s_speaker();
+
+	/* Init I2C bus timing register for audio codecs */
+	mtk_i2c_bus_init(I2C7, I2C_SPEED_STANDARD);
+
+	printk(BIOS_INFO, "%s: AMP configuration done\n", __func__);
+}
+
+static void configure_aw88081(void)
+{
+	/* Set the SOC corresponding pin to I2S related function */
+	setup_i2s_speaker();
+
+	/* Init I2C bus timing register for audio codecs */
+	mtk_i2c_bus_init(I2C8, I2C_SPEED_STANDARD);
+
+	printk(BIOS_INFO, "%s: AMP configuration done\n", __func__);
+}
+
+static void configure_alc5645(void)
+{
+	/* SoC I2S */
+	gpio_set_mode(GPIO_I2S_HP_MCK, GPIO_FUNC(I2SOUT0_MCK, I2SOUT0_MCK));
+	gpio_set_mode(GPIO_I2S_HP_BCK, GPIO_FUNC(I2SOUT0_BCK, I2SOUT0_BCK));
+	gpio_set_mode(GPIO_I2S_HP_LRCK, GPIO_FUNC(I2SOUT0_LRCK, I2SOUT0_LRCK));
+	gpio_set_mode(GPIO_I2S_HP_DO, GPIO_FUNC(I2SOUT0_DO, I2SOUT0_DO));
+
+	/* Init I2C bus timing register for audio codecs */
+	mtk_i2c_bus_init(I2C2, I2C_SPEED_STANDARD);
+
+	printk(BIOS_INFO, "%s: AMP configuration done\n", __func__);
+}
+
+static void configure_audio(void)
+{
+	mtcmos_audio_power_on();
+	mtcmos_protect_audio_bus();
+
+	/* Switch to normal mode */
+	write32p(AFE_SE_SECURE_CON1, 0x0);
+
+	if (fw_config_probe(FW_CONFIG(AUDIO_AMP, AMP_RT9123)) ||
+	    fw_config_probe(FW_CONFIG(AUDIO_AMP, AMP_RT1019)))
+		configure_rt9123_rt1019();
+	else if (fw_config_probe(FW_CONFIG(AUDIO_AMP, AMP_AW88081)))
+		configure_aw88081();
+	else if (fw_config_probe(FW_CONFIG(AUDIO_AMP, AMP_ALC5645)))
+		configure_alc5645();
+	else if (fw_config_probe(FW_CONFIG(AUDIO_AMP, AMP_CS35L51)))
+		configure_cs35l51();
+	else
+		printk(BIOS_WARNING, "Unknown amp\n");
+}
+
+static void power_on_fpmcu(void)
+{
+	/* Power on the fingerprint MCU */
+	gpio_output(GPIO_EN_PWR_FP, 1);
+	gpio_output(GPIO_FP_RST_1V8_S3_L, 1);
+}
+
+void mainboard_prepare_cr50_reset(void)
+{
+	printk(BIOS_INFO, "%s: Powering MIPI panel off\n", __func__);
+	if (mtk_mipi_panel_poweroff() < 0)
+		printk(BIOS_ERR, "%s: Failed to power off MIPI panel\n", __func__);
+}
+
+enum mtk_storage_type mainboard_get_storage_type(void)
+{
+	uint32_t index = storage_id();
+
+	switch (index) {
+	case 0:
+		return STORAGE_UFS_31;
+	case 1:
+		return STORAGE_UFS_22;
+	case 2:
+		return STORAGE_EMMC;
+	default:
+		printk(BIOS_WARNING, "unsupported storage id %u\n", index);
+	}
+	return STORAGE_UNKNOWN;
+}
+
+bool mainboard_needs_ufs_init(void)
+{
+	/* An unprovisioned CBI initializes both eMMC and UFS. */
+	return !fw_config_is_provisioned() ||
+	       !fw_config_probe(FW_CONFIG(STORAGE, STORAGE_EMMC));
+}
+
+static void mainboard_init(struct device *dev)
+{
+	mt6359p_init_pmif_arb();
+
+	if (!fw_config_is_provisioned() || fw_config_probe(FW_CONFIG(STORAGE, STORAGE_EMMC)))
+		mtk_msdc_configure_emmc(true);
+
+	if (!mainboard_needs_ufs_init())
+		mtcmos_ufs_power_off();
+
+	dpm_init();
+	setup_usb_host();
+	setup_usb_secondary_host();
+	spm_init();
+	power_on_fpmcu();
+	configure_audio();
+
+	if (CONFIG(SKYWALKER_SDCARD_INIT))
+		mtk_msdc_configure_sdcard();
+
+	if (CONFIG(ARM64_USE_ARM_TRUSTED_FIRMWARE))
+		register_reset_to_bl31(GPIO_AP_EC_WARM_RST_REQ.id, true);
+
+	if (display_init_required()) {
+		if (mtk_display_init(NULL) < 0)
+			printk(BIOS_ERR, "%s: Failed to init display\n", __func__);
+	} else {
+		printk(BIOS_INFO, "%s: Skipping display init; disabling secure mode\n",
+		       __func__);
+		mtcmos_display_power_on();
+		mtcmos_protect_display_bus();
+		mtk_display_disable_secure_mode();
+	}
+
+}
+
+static void mainboard_enable(struct device *dev)
+{
+	dev->ops->init = &mainboard_init;
+}
+
+struct chip_operations mainboard_ops = {
+	.name = CONFIG_MAINBOARD_PART_NUMBER,
+	.enable_dev = mainboard_enable,
+};
+
+void lb_board(struct lb_header *header)
+{
+	const struct panel_serializable_data *mipi_data = mtk_get_mipi_panel_data();
+
+	if (!mipi_data)
+		return;
+
+	size_t cmd_len = mipi_panel_get_commands_len(mipi_data->poweroff);
+
+	if (!cmd_len)
+		return;
+
+	struct lb_panel_poweroff *panel_poweroff =
+		(struct lb_panel_poweroff *)lb_new_record(header);
+	panel_poweroff->tag = LB_TAG_PANEL_POWEROFF;
+	panel_poweroff->size = ALIGN_UP(sizeof(*panel_poweroff) + cmd_len,
+					LB_ENTRY_ALIGN);
+	memcpy(panel_poweroff->cmd, mipi_data->poweroff, cmd_len);
+}
+
+void fw_config_get_mainboard_override(uint64_t *fw_config)
+{
+	/* Handle unprovisioned fw_config. */
+	if (*fw_config == UNDEFINED_FW_CONFIG)
+		*fw_config = 0;
+
+	uint64_t fw_config_mt8189r = FW_CONFIG_VALUE(MT8189R, FALSE);
+	if (get_cpu_segment_id() == MTK_CPU_SEG_ID_MT8189R)
+		fw_config_mt8189r = FW_CONFIG_VALUE(MT8189R, TRUE);
+
+	printk(BIOS_INFO, "Overriding fw_config MT8189R with %llu\n", fw_config_mt8189r);
+	fw_config_value_set_field(fw_config, FW_CONFIG_FIELD(MT8189R), fw_config_mt8189r);
+}

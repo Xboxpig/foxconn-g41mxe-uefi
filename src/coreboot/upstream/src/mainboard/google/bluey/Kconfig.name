@@ -1,0 +1,33 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+comment "Bluey (Qualcomm Snapdragon X Plus (X1P-42-100))"
+
+config BOARD_GOOGLE_BLUEY
+	bool "->  Bluey"
+
+config BOARD_GOOGLE_QUENBI
+	bool "->  Quenbi"
+
+config BOARD_GOOGLE_BLUEYH
+	bool "->  BlueyH"
+
+config BOARD_GOOGLE_QUENBIH
+	bool "->  QuenbiH"
+
+config BOARD_GOOGLE_QUARTZ
+	bool "->  Quartz"
+
+config BOARD_GOOGLE_MICA
+	bool "->  Mica"
+
+config BOARD_GOOGLE_ANNITE
+	bool "->  Annite"
+
+config BOARD_GOOGLE_PIC
+	bool "->  Pic"
+
+config BOARD_GOOGLE_ANETO
+	bool "->  Aneto"
+
+config BOARD_GOOGLE_MERU
+	bool "->  Meru"

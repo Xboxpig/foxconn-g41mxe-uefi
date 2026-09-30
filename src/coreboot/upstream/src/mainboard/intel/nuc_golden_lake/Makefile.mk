@@ -1,0 +1,8 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+bootblock-y += early_southbridge.c
+romstage-y += early_southbridge.c
+bootblock-y += variants/$(VARIANT_DIR)/gpio.c
+romstage-y += variants/$(VARIANT_DIR)/gpio.c
+ramstage-y += hda_verb.c
+ramstage-$(CONFIG_MAINBOARD_USE_LIBGFXINIT) += gma-mainboard.ads

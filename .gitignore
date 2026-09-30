@@ -1,0 +1,16 @@
+
+# Harness rebuildable runtime state
+.harness/index/
+.harness/transactions/
+.harness/*.lock
+.harness/cache/
+/.harness/venv/
+/build/
+__pycache__/
+*.pyc
+
+# Local hardware copies and preinstalled tools are not public deliverables.
+/backups/
+/toolchains/
+/work/
+/outputs/

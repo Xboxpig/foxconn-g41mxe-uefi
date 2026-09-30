@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = G41CsmTest
+  FILE_GUID = 6e2f4063-d7a4-4b2d-a6c6-995d8ab18372
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 0.1
+  ENTRY_POINT = CsmTestEntry
+[Sources]
+  G41CsmTest.c
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  IntelFrameworkPkg/IntelFrameworkPkg.dec
+  IntelFrameworkModulePkg/IntelFrameworkModulePkg.dec
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  UefiLib
+  MemoryAllocationLib
+  UefiBootManagerLib
+  DevicePathLib
+[Protocols]
+  gEfiLegacyBiosProtocolGuid
+  gEfiMpServiceProtocolGuid
+

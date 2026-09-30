@@ -1,0 +1,32 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config SMMSTORE
+	bool "Support for flash based, SMM mediated data store"
+	depends on BOOT_DEVICE_SUPPORTS_WRITES && HAVE_SMI_HANDLER
+	default y if PAYLOAD_EDK2 || PAYLOAD_CRABEFI
+	select SPI_FLASH_SMM if BOOT_DEVICE_SPI_FLASH_RW_NOMMAP
+	help
+	  SMMSTORE allows secure communication with SMM and makes no
+	  assumptions on the structure of the data stored within. It splits
+	  the store into blocks to allow fault tolerant writes.
+
+if SMMSTORE
+
+config SMMSTORE_SIZE
+	hex "size of the SMMSTORE FMAP region"
+	default 0x80000
+	help
+	  Sets the size of the default SMMSTORE FMAP region.
+	  If using an UEFI payload, note that UEFI specifies at least 64K.
+	  Fault-tolerant UEFI variable stores typically need multiple
+	  blocks (often at least 256K with 64K blocks), so prefer a
+	  rather large value.
+
+config SMMSTORE_BLOCK_SIZE
+	int
+	default 65536
+	help
+	  Sets the logical block size used by the SMMSTORE protocol. This is
+	  an internal SoC or board policy value, not a user-visible option.
+
+endif

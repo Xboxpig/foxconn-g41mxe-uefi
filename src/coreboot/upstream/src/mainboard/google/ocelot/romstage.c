@@ -1,0 +1,75 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
+#include <baseboard/variants.h>
+#include <fsp/api.h>
+#include <ec/google/chromeec/ec.h>
+#include <security/vboot/vboot_common.h>
+#include <soc/romstage.h>
+#include <soc/soc_chip.h>
+#include <static.h>
+#include <string.h>
+
+/*
+ * Placeholder to configure GPIO early from romstage relying on the FW_CONFIG.
+ *
+ * If any platform would like to override early GPIOs, they should override from
+ * the variant directory.
+ */
+__weak void fw_config_configure_pre_mem_gpio(void)
+{
+	/* Nothing to do */
+}
+
+__weak void variant_update_soc_memory_init_params(FSPM_UPD *memupd)
+{
+	/* Nothing to do */
+}
+
+void __weak variant_post_gpio_configure(void)
+{
+	/* default implementation does nothing */
+}
+
+void mainboard_memory_init_params(FSPM_UPD *memupd)
+{
+	const struct pad_config *pads;
+	size_t pads_num;
+	const struct mb_cfg *mem_config = variant_memory_params();
+	bool half_populated = variant_is_half_populated();
+	struct mem_spd spd_info;
+
+	pads = variant_romstage_gpio_table(&pads_num);
+	if (pads_num)
+		gpio_configure_pads(pads, pads_num);
+	fw_config_configure_pre_mem_gpio();
+
+	memset(&spd_info, 0, sizeof(spd_info));
+	variant_get_spd_info(&spd_info);
+
+	memcfg_init(memupd, mem_config, &spd_info, half_populated);
+
+	/* Override FSP-M UPD per board if required. */
+	variant_update_soc_memory_init_params(memupd);
+
+	/* Disable CPU ratio override for unstable power scenarios */
+	if (CONFIG(EC_GOOGLE_CHROMEEC) && (!google_chromeec_is_battery_present() ||
+			google_chromeec_is_below_critical_threshold())) {
+		const struct soc_intel_pantherlake_config *config = config_of_soc();
+		FSP_M_CONFIG *m_cfg = &memupd->FspmConfig;
+		if (config->cpu_ratio_override)
+			m_cfg->CpuRatio = 0;
+	}
+
+	variant_post_gpio_configure();
+}
+
+bool mainboard_can_allow_flex_ratio_override(void)
+{
+	if (!CONFIG(VBOOT))
+		return false;
+
+	if (vboot_recovery_mode_enabled() || vboot_check_recovery_request())
+		return false;
+
+	return true;
+}

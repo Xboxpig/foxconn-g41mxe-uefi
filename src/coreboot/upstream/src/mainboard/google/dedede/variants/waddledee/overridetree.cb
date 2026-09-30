@@ -1,0 +1,186 @@
+chip soc/intel/jasperlake
+
+	# Intel Common SoC Config
+	#+-------------------+---------------------------+
+	#| Field             |  Value                    |
+	#+-------------------+---------------------------+
+	#| GSPI0             | cr50 TPM. Early init is   |
+	#|                   | required to set up a BAR  |
+	#|                   | for TPM communication     |
+	#|                   | before memory is up       |
+	#| I2C0              | Trackpad                  |
+	#| I2C1              | Digitizer                 |
+	#| I2C2              | Touchscreen               |
+	#| I2C3              | Camera                    |
+	#| I2C4              | Audio                     |
+	#+-------------------+---------------------------+
+	register "common_soc_config" = "{
+		.gspi[0] = {
+			.speed_mhz = 1,
+			.early_init = 1,
+		},
+		.i2c[0] = {
+			.speed = I2C_SPEED_FAST,
+			.speed_config[0] = {
+				.speed = I2C_SPEED_FAST,
+				.scl_lcnt = 190,
+				.scl_hcnt = 100,
+				.sda_hold = 40,
+			}
+		},
+		.i2c[1] = {
+			.speed = I2C_SPEED_FAST,
+		},
+		.i2c[2] = {
+			.speed = I2C_SPEED_FAST,
+			.speed_config[0] = {
+				.speed = I2C_SPEED_FAST,
+				.scl_lcnt = 190,
+				.scl_hcnt = 100,
+				.sda_hold = 40,
+			}
+		},
+		.i2c[3] = {
+			.speed = I2C_SPEED_FAST,
+		},
+		.i2c[4] = {
+			.speed = I2C_SPEED_FAST,
+			.speed_config[0] = {
+				.speed = I2C_SPEED_FAST,
+				.scl_lcnt = 190,
+				.scl_hcnt = 100,
+				.sda_hold = 40,
+			}
+		},
+	}"
+
+	register "SerialIoI2cMode[PchSerialIoIndexI2C0]" = "PchSerialIoPci"
+	register "SerialIoI2cMode[PchSerialIoIndexI2C1]" = "PchSerialIoPci"
+	register "SerialIoI2cMode[PchSerialIoIndexI2C2]" = "PchSerialIoPci"
+	register "SerialIoI2cMode[PchSerialIoIndexI2C3]" = "PchSerialIoPci"
+	register "SerialIoI2cMode[PchSerialIoIndexI2C4]" = "PchSerialIoPci"
+
+	device domain 0 on
+		device ref igpu on
+			chip drivers/gfx/generic
+				register "device_count" = "1"
+				# DDIA for eDP
+				register "device[0].name" = ""LCD0""
+				# Internal panel on the first port of the graphics chip
+				register "device[0].type" = "panel"
+
+				device generic 0 on end
+			end
+		end
+		device ref south_xhci on
+			chip drivers/usb/acpi
+				device ref xhci_root_hub on
+					chip drivers/usb/acpi
+						register "desc" = ""Discrete Bluetooth""
+						register "type" = "UPC_TYPE_INTERNAL"
+						register "reset_gpio" = "ACPI_GPIO_OUTPUT_ACTIVE_LOW(GPP_H19)"
+						device ref usb2_port5 on end
+					end
+					chip drivers/usb/acpi
+						register "desc" = ""Integrated Bluetooth""
+						register "type" = "UPC_TYPE_INTERNAL"
+						register "reset_gpio" = "ACPI_GPIO_OUTPUT_ACTIVE_LOW(GPP_H19)"
+						device ref usb2_port8 on end
+					end
+				end
+			end
+		end
+		device ref i2c0 on
+			chip drivers/i2c/hid
+				register "generic.hid" = ""SYNA0000""
+				register "generic.cid" = ""ACPI0C50""
+				register "generic.desc" = ""Synaptics Touchpad""
+				register "generic.irq" = "ACPI_IRQ_WAKE_LEVEL_LOW(GPP_B3_IRQ)"
+				register "generic.wake" = "GPE0_DW0_03"
+				register "generic.detect" = "1"
+				register "hid_desc_reg_offset" = "0x20"
+				device i2c 0x2c on end
+			end
+		end
+		device ref i2c2 on
+			chip drivers/i2c/hid
+				register "generic.hid" = ""SIS6496""
+				register "generic.desc" = ""SIS Touchscreen""
+				register "generic.irq" = "ACPI_IRQ_LEVEL_LOW(GPP_D4_IRQ)"
+				register "generic.detect" = "1"
+				register "generic.reset_gpio" =
+							"ACPI_GPIO_OUTPUT_ACTIVE_LOW(GPP_D5)"
+				register "generic.stop_gpio" =
+							"ACPI_GPIO_OUTPUT_ACTIVE_LOW(GPP_A11)"
+				register "generic.stop_delay_ms" = "100"
+				register "generic.enable_gpio" =
+							"ACPI_GPIO_OUTPUT_ACTIVE_HIGH(GPP_D6)"
+				register "generic.enable_delay_ms" = "7"
+				register "generic.has_power_resource" = "1"
+				register "hid_desc_reg_offset" = "0x00"
+				device i2c 5c on end
+			end
+			chip drivers/i2c/hid
+				register "generic.hid" = ""GDIX0000""
+				register "generic.desc" = ""Goodix Touchscreen""
+				register "generic.irq" = "ACPI_IRQ_LEVEL_LOW(GPP_D4_IRQ)"
+				register "generic.detect" = "1"
+				register "generic.reset_gpio" =
+							"ACPI_GPIO_OUTPUT_ACTIVE_LOW(GPP_D5)"
+				register "generic.reset_delay_ms" = "120"
+				register "generic.reset_off_delay_ms" = "2"
+				register "generic.enable_gpio" = "ACPI_GPIO_OUTPUT_ACTIVE_HIGH(GPP_D6)"
+				register "generic.enable_delay_ms" = "12"
+				register "generic.has_power_resource" = "1"
+				register "hid_desc_reg_offset" = "0x01"
+				device i2c 0x5d on end
+			end
+		end
+		device ref i2c3 on
+			chip drivers/i2c/gpiomux/mux
+				register "mux_gpio_count" = "1"
+				register "mux_gpio[0]" = "ACPI_GPIO_OUTPUT(GPP_E5)"
+				device generic 0 on
+					chip drivers/i2c/gpiomux/bus
+						device generic 0 on end # I2C Mux Bus 0
+					end
+					chip drivers/i2c/gpiomux/bus
+						device generic 1 on end # I2C Mux Bus 1
+					end
+				end # I2C MUX
+			end
+		end
+		device ref i2c4 on
+			chip drivers/i2c/generic
+				register "hid" = ""10EC5682""
+				register "name" = ""RT58""
+				register "desc" = ""Realtek RT5682""
+				register "irq_gpio" = "ACPI_GPIO_IRQ_EDGE_BOTH(GPP_D16)"
+				register "property_count" = "1"
+				register "property_list[0].type" = "ACPI_DP_TYPE_INTEGER"
+				register "property_list[0].name" = ""realtek,jd-src""
+				register "property_list[0].integer" = "1"
+				device i2c 1a on end
+			end
+			chip drivers/i2c/generic
+				register "hid" = ""10EC1015""
+				register "desc" = ""Realtek SPK AMP L""
+				register "uid" = "0"
+				device i2c 28 on end
+			end
+			chip drivers/i2c/generic
+				register "hid" = ""10EC1015""
+				register "desc" = ""Realtek SPK AMP R""
+				register "uid" = "1"
+				device i2c 29 on end
+			end
+		end
+		device ref pcie_rp8 on
+			chip drivers/wifi/generic
+				register "wake" = "GPE0_DW2_03"
+				device pci 00.0 on  end
+			end
+		end
+		device ref hda on end
+	end
+end

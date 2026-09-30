@@ -1,0 +1,54 @@
+## SPDX-License-Identifier: BSD-2-Clause
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = G41CsmSupportDxe
+  FILE_GUID = fbdd6b47-f280-47f8-b04c-e54f9f2c9e80
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 0.1
+  ENTRY_POINT = G41CsmSupportEntry
+
+[Sources]
+  G41CsmSupport.c
+  CsmSupportLib.h
+  LegacyRegion.c
+  LegacyRegion.h
+  LegacyInterrupt.c
+  LegacyInterrupt.h
+  LegacyPlatform.c
+  LegacyPlatform.h
+  G41Routing.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  OvmfPkg/OvmfPkg.dec
+  IntelFrameworkPkg/IntelFrameworkPkg.dec
+  UefiPayloadPkg/UefiPayloadPkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  PciLib
+  IoLib
+  MemoryAllocationLib
+  DxeServicesLib
+  DevicePathLib
+
+[Protocols]
+  gEfiDevicePathProtocolGuid
+  gEfiDiskInfoProtocolGuid
+  gEfiLegacyBiosPlatformProtocolGuid
+  gEfiLegacyBiosProtocolGuid
+  gEfiLegacyInterruptProtocolGuid
+  gEfiLegacyRegion2ProtocolGuid
+  gEfiPciIoProtocolGuid
+  gEfiPciRootBridgeIoProtocolGuid
+  gEfiVariableArchProtocolGuid
+  gEfiVariableWriteArchProtocolGuid
+
+[Depex]
+  gEfiPciRootBridgeIoProtocolGuid AND gEfiVariableArchProtocolGuid AND gEfiVariableWriteArchProtocolGuid

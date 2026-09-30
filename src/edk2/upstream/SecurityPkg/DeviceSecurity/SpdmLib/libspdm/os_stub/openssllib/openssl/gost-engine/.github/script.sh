@@ -1,0 +1,22 @@
+#!/bin/bash -efux
+
+PREFIX=$HOME/opt
+PATH=$PREFIX/bin:$PATH
+BUILD_ENGINE=${GOST_BUILD_ENGINE:+-DGOST_BUILD_ENGINE=$GOST_BUILD_ENGINE}
+BUILD_PROVIDER=${GOST_BUILD_PROVIDER:+-DGOST_BUILD_PROVIDER=$GOST_BUILD_PROVIDER}
+
+mkdir build
+cd build
+cmake -DTLS13_PATCHED_OPENSSL=$PATCH_OPENSSL -DOPENSSL_ROOT_DIR=$PREFIX \
+    -DOPENSSL_ENGINES_DIR=$PREFIX/engines ${ASAN-} \
+    $BUILD_ENGINE $BUILD_PROVIDER ..
+
+make
+if [ "${OPENSSL_BRANCH}" = "master" ]; then
+    ctest -E pkcs12_rfc9337 --output-on-failure
+else
+    make test CTEST_OUTPUT_ON_FAILURE=1
+fi
+if [ -z "${ASAN-}" ]; then
+    make tcl_tests
+fi

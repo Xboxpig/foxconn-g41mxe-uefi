@@ -1,0 +1,44 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config ARCH_BOOTBLOCK_ARMV8_64
+	bool
+	select ARCH_BOOTBLOCK_ARM64
+
+config ARCH_VERSTAGE_ARMV8_64
+	bool
+	select ARCH_VERSTAGE_ARM64
+
+config ARCH_ROMSTAGE_ARMV8_64
+	bool
+	select ARCH_ROMSTAGE_ARM64
+
+config ARCH_RAMSTAGE_ARMV8_64
+	bool
+	select ARCH_RAMSTAGE_ARM64
+
+if ARCH_ARM64
+
+config ARCH_ARMV8_EXTENSION
+	int
+	default 0
+	help
+	  Specify ARMv8 extension, for example '1' for ARMv8.1, to control the
+	  '-march' option passed into the compiler. Defaults to 0 for vanilla
+	  ARMv8 but may be overridden in the SoC's Kconfig.
+
+	  All ARMv8 implementations are downwards-compatible, so this does not
+	  need to be changed unless specific features (e.g. new instructions)
+	  are used by the SoC's coreboot code.
+
+config ARCH_ARM64_DEBUG_MMU
+	bool "Debug MMU table"
+	default n
+	help
+	  When enabled, the MMU table walker will dump the translation
+	  table entries and their attributes to the debug console during
+	  initialization or range configuration.
+
+	  This is useful for verifying that memory ranges (Normal, Device,
+	  Read-Only, etc.) are being mapped correctly in the page tables.
+
+endif # ARCH_ARM64

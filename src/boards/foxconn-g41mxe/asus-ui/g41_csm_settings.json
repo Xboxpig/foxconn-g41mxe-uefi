@@ -1,0 +1,4 @@
+[
+  {"name":"csm_enable","qid":10708,"form":10008,"default":0,"label":"Launch CSM","help":"Native UEFI LegacyBios/Csm16 support, not a separate payload. Disabled by default. Save and reset to apply. Secure Boot is not provided by this build.","choices":{"0":"Disabled","1":"Enabled"}},
+  {"name":"boot_device_control","qid":4217,"form":10008,"default":0,"label":"Boot Device Control","help":"With CSM enabled: filter OS boot attempts to UEFI and Legacy, UEFI only, or Legacy only. Firmware tools remain available. Save and reset to apply.","choices":{"0":"UEFI and Legacy","1":"UEFI only","2":"Legacy only"}}
+]

@@ -1,0 +1,1482 @@
+/** @file
+  FrontPage routines to handle the callbacks and browser calls
+
+Copyright (c) 2004 - 2017, Intel Corporation. All rights reserved.<BR>
+(C) Copyright 2018 Hewlett Packard Enterprise Development LP<BR>
+SPDX-License-Identifier: BSD-2-Clause-Patent
+
+**/
+
+#include "FrontPage.h"
+#include "FrontPageCustomizedUi.h"
+#include <Protocol/BatteryStatus.h>
+#include <Protocol/HiiPopup.h>
+
+#define MAX_STRING_LEN  200
+
+EFI_GUID  mFrontPageGuid = FRONT_PAGE_FORMSET_GUID;
+
+BOOLEAN  mResetRequired = FALSE;
+
+EFI_FORM_BROWSER2_PROTOCOL         *gFormBrowser2 = NULL;
+CHAR8                              *mLanguageString = NULL;
+BOOLEAN                             mModeInitialized = FALSE;
+EFI_EVENT                           mBatteryUpdateTimer = NULL;
+BOOLEAN                             mFrontPageActive = FALSE;
+STATIC EFI_BATTERY_STATUS_PROTOCOL *mBatteryStatusProtocol = NULL;
+STATIC UINT8                        mLastBatteryPercentage = 0xFF;
+STATIC BOOLEAN                      mLastBatteryCharging = FALSE;
+//
+// Boot video resolution and text mode.
+//
+UINT32  mBootHorizontalResolution = 0;
+UINT32  mBootVerticalResolution   = 0;
+UINT32  mBootTextModeColumn       = 0;
+UINT32  mBootTextModeRow          = 0;
+//
+// BIOS setup video resolution and text mode.
+//
+UINT32  mSetupTextModeColumn       = 0;
+UINT32  mSetupTextModeRow          = 0;
+UINT32  mSetupHorizontalResolution = 0;
+UINT32  mSetupVerticalResolution   = 0;
+
+FRONT_PAGE_CALLBACK_DATA  gFrontPagePrivate = {
+  FRONT_PAGE_CALLBACK_DATA_SIGNATURE,
+  NULL,
+  NULL,
+  NULL,
+  {
+    FakeExtractConfig,
+    FakeRouteConfig,
+    FrontPageCallback
+  }
+};
+
+HII_VENDOR_DEVICE_PATH  mFrontPageHiiVendorDevicePath = {
+  {
+    {
+      HARDWARE_DEVICE_PATH,
+      HW_VENDOR_DP,
+      {
+        (UINT8)(sizeof (VENDOR_DEVICE_PATH)),
+        (UINT8)((sizeof (VENDOR_DEVICE_PATH)) >> 8)
+      }
+    },
+    //
+    // {8E6D99EE-7531-48f8-8745-7F6144468FF2}
+    //
+    { 0x8e6d99ee, 0x7531, 0x48f8, { 0x87, 0x45, 0x7f, 0x61, 0x44, 0x46, 0x8f, 0xf2 }
+    }
+  },
+  {
+    END_DEVICE_PATH_TYPE,
+    END_ENTIRE_DEVICE_PATH_SUBTYPE,
+    {
+      (UINT8)(END_DEVICE_PATH_LENGTH),
+      (UINT8)((END_DEVICE_PATH_LENGTH) >> 8)
+    }
+  }
+};
+
+/**
+  Update the banner information for the Front Page based on Smbios information.
+
+**/
+VOID
+UpdateFrontPageBannerStrings (
+  VOID
+  );
+
+/**
+  This function allows a caller to extract the current configuration for one
+  or more named elements from the target driver.
+
+
+  @param This            Points to the EFI_HII_CONFIG_ACCESS_PROTOCOL.
+  @param Request         A null-terminated Unicode string in <ConfigRequest> format.
+  @param Progress        On return, points to a character in the Request string.
+                         Points to the string's null terminator if request was successful.
+                         Points to the most recent '&' before the first failing name/value
+                         pair (or the beginning of the string if the failure is in the
+                         first name/value pair) if the request was not successful.
+  @param Results         A null-terminated Unicode string in <ConfigAltResp> format which
+                         has all values filled in for the names in the Request string.
+                         String to be allocated by the called function.
+
+  @retval  EFI_SUCCESS            The Results is filled with the requested values.
+  @retval  EFI_OUT_OF_RESOURCES   Not enough memory to store the results.
+  @retval  EFI_INVALID_PARAMETER  Request is illegal syntax, or unknown name.
+  @retval  EFI_NOT_FOUND          Routing data doesn't match any storage in this driver.
+
+**/
+EFI_STATUS
+EFIAPI
+FakeExtractConfig (
+  IN  CONST EFI_HII_CONFIG_ACCESS_PROTOCOL  *This,
+  IN  CONST EFI_STRING                      Request,
+  OUT EFI_STRING                            *Progress,
+  OUT EFI_STRING                            *Results
+  )
+{
+  if ((Progress == NULL) || (Results == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  *Progress = Request;
+  return EFI_NOT_FOUND;
+}
+
+/**
+  This function processes the results of changes in configuration.
+
+
+  @param This            Points to the EFI_HII_CONFIG_ACCESS_PROTOCOL.
+  @param Configuration   A null-terminated Unicode string in <ConfigResp> format.
+  @param Progress        A pointer to a string filled in with the offset of the most
+                         recent '&' before the first failing name/value pair (or the
+                         beginning of the string if the failure is in the first
+                         name/value pair) or the terminating NULL if all was successful.
+
+  @retval  EFI_SUCCESS            The Results is processed successfully.
+  @retval  EFI_INVALID_PARAMETER  Configuration is NULL.
+  @retval  EFI_NOT_FOUND          Routing data doesn't match any storage in this driver.
+
+**/
+EFI_STATUS
+EFIAPI
+FakeRouteConfig (
+  IN  CONST EFI_HII_CONFIG_ACCESS_PROTOCOL  *This,
+  IN  CONST EFI_STRING                      Configuration,
+  OUT EFI_STRING                            *Progress
+  )
+{
+  if ((Configuration == NULL) || (Progress == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  *Progress = Configuration;
+
+  return EFI_NOT_FOUND;
+}
+
+/**
+  This function processes the results of changes in configuration.
+
+
+  @param This            Points to the EFI_HII_CONFIG_ACCESS_PROTOCOL.
+  @param Action          Specifies the type of action taken by the browser.
+  @param QuestionId      A unique value which is sent to the original exporting driver
+                         so that it can identify the type of data to expect.
+  @param Type            The type of value for the question.
+  @param Value           A pointer to the data being sent to the original exporting driver.
+  @param ActionRequest   On return, points to the action requested by the callback function.
+
+  @retval  EFI_SUCCESS           The callback successfully handled the action.
+  @retval  EFI_OUT_OF_RESOURCES  Not enough storage is available to hold the variable and its data.
+  @retval  EFI_DEVICE_ERROR      The variable could not be saved.
+  @retval  EFI_UNSUPPORTED       The specified Action is not supported by the callback.
+
+**/
+EFI_STATUS
+EFIAPI
+FrontPageCallback (
+  IN  CONST EFI_HII_CONFIG_ACCESS_PROTOCOL  *This,
+  IN  EFI_BROWSER_ACTION                    Action,
+  IN  EFI_QUESTION_ID                       QuestionId,
+  IN  UINT8                                 Type,
+  IN  EFI_IFR_TYPE_VALUE                    *Value,
+  OUT EFI_BROWSER_ACTION_REQUEST            *ActionRequest
+  )
+{
+  // Track when front page form is open/closed
+  if (Action == EFI_BROWSER_ACTION_FORM_OPEN) {
+    mFrontPageActive = TRUE;
+  } else if (Action == EFI_BROWSER_ACTION_FORM_CLOSE) {
+    mFrontPageActive = FALSE;
+  }
+
+  return UiFrontPageCallbackHandler (gFrontPagePrivate.HiiHandle, Action, QuestionId, Type, Value, ActionRequest);
+}
+
+/**
+
+  Update the menus in the front page.
+
+**/
+VOID
+UpdateFrontPageForm (
+  VOID
+  )
+{
+  VOID                *StartOpCodeHandle;
+  VOID                *EndOpCodeHandle;
+  EFI_IFR_GUID_LABEL  *StartGuidLabel;
+  EFI_IFR_GUID_LABEL  *EndGuidLabel;
+
+  //
+  // Allocate space for creation of UpdateData Buffer
+  //
+  StartOpCodeHandle = HiiAllocateOpCodeHandle ();
+  if (StartOpCodeHandle == NULL) {
+    ASSERT (StartOpCodeHandle != NULL);
+    return;
+  }
+
+  EndOpCodeHandle = HiiAllocateOpCodeHandle ();
+  if (EndOpCodeHandle == NULL) {
+    ASSERT (EndOpCodeHandle != NULL);
+    goto Exit;
+  }
+
+  //
+  // Create Hii Extend Label OpCode as the start opcode
+  //
+  StartGuidLabel               = (EFI_IFR_GUID_LABEL *)HiiCreateGuidOpCode (StartOpCodeHandle, &gEfiIfrTianoGuid, NULL, sizeof (EFI_IFR_GUID_LABEL));
+  StartGuidLabel->ExtendOpCode = EFI_IFR_EXTEND_OP_LABEL;
+  StartGuidLabel->Number       = LABEL_FRONTPAGE_INFORMATION;
+  //
+  // Create Hii Extend Label OpCode as the end opcode
+  //
+  EndGuidLabel               = (EFI_IFR_GUID_LABEL *)HiiCreateGuidOpCode (EndOpCodeHandle, &gEfiIfrTianoGuid, NULL, sizeof (EFI_IFR_GUID_LABEL));
+  EndGuidLabel->ExtendOpCode = EFI_IFR_EXTEND_OP_LABEL;
+  EndGuidLabel->Number       = LABEL_END;
+
+  //
+  // Updata Front Page form
+  //
+  UiCustomizeFrontPage (
+    gFrontPagePrivate.HiiHandle,
+    StartOpCodeHandle
+    );
+
+  HiiUpdateForm (
+    gFrontPagePrivate.HiiHandle,
+    &mFrontPageGuid,
+    FRONT_PAGE_FORM_ID,
+    StartOpCodeHandle,
+    EndOpCodeHandle
+    );
+
+  HiiFreeOpCodeHandle (EndOpCodeHandle);
+Exit:
+  HiiFreeOpCodeHandle (StartOpCodeHandle);
+  return;
+}
+
+/**
+  Get battery information from BatteryStatus protocol.
+
+  The unified EcAcpiBatteryStatusDxe driver handles EC detection internally,
+  so we can simply locate the protocol and use it directly.
+
+  @param[out] BatteryPercentage  Battery charge percentage (0-100). 0xFF indicates error/unknown.
+  @param[out] BatteryPresent     TRUE if battery is present, FALSE otherwise.
+  @param[out] BatteryCharging    TRUE if battery is charging, FALSE otherwise.
+
+  @retval EFI_SUCCESS            Battery information retrieved successfully.
+  @retval EFI_NOT_FOUND          No BatteryStatus protocol instance found.
+  @retval EFI_UNSUPPORTED        Battery not available or not supported.
+
+**/
+STATIC
+EFI_STATUS
+GetBatteryInfoFromProtocol (
+  OUT UINT8    *BatteryPercentage,
+  OUT BOOLEAN  *BatteryPresent,
+  OUT BOOLEAN  *BatteryCharging
+  )
+{
+  EFI_STATUS  Status;
+
+  if ((BatteryPercentage == NULL) || (BatteryPresent == NULL) || (BatteryCharging == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  // Try cached protocol instance first
+  if (mBatteryStatusProtocol != NULL) {
+    Status = mBatteryStatusProtocol->GetBatteryInfo (mBatteryStatusProtocol, BatteryPercentage, BatteryPresent, BatteryCharging);
+    if (!EFI_ERROR (Status)) {
+      return Status;
+    }
+    // If cached instance fails, clear it and locate again
+    mBatteryStatusProtocol = NULL;
+  }
+
+  // Locate BatteryStatus protocol instance
+  Status = gBS->LocateProtocol (
+                  &gEfiBatteryStatusProtocolGuid,
+                  NULL,
+                  (VOID **)&mBatteryStatusProtocol
+                  );
+
+  if (EFI_ERROR (Status) || (mBatteryStatusProtocol == NULL)) {
+    return EFI_NOT_FOUND;
+  }
+
+  // Get battery information
+  return mBatteryStatusProtocol->GetBatteryInfo (mBatteryStatusProtocol, BatteryPercentage, BatteryPresent, BatteryCharging);
+}
+
+/**
+  Update the battery level string with provided battery values.
+
+  @param[in] BatteryPercentage  Battery charge percentage (0-100). 0xFF indicates error/unknown.
+  @param[in] BatteryPresent      TRUE if battery is present, FALSE otherwise.
+  @param[in] BatteryCharging     TRUE if battery is charging, FALSE otherwise.
+
+**/
+STATIC
+VOID
+UpdateBatteryString (
+  IN UINT8    BatteryPercentage,
+  IN BOOLEAN  BatteryPresent,
+  IN BOOLEAN  BatteryCharging
+  )
+{
+  CHAR16  *BatteryString;
+  UINTN   BufferSize;
+
+  // Allocate buffer: "BAT: " (5) + percentage (3) + "%" (1) + charging status (11) + null
+  BufferSize = (5 + 3 + 1 + 11 + 1) * sizeof (CHAR16);
+  BatteryString = AllocateZeroPool (BufferSize);
+  if (BatteryString != NULL) {
+    UnicodeSPrint (
+      BatteryString,
+      BufferSize / sizeof (CHAR16),
+      L"BAT: %d",
+      BatteryPercentage
+      );
+    StrCatS (BatteryString, BufferSize / sizeof (CHAR16), L"%");
+    if (BatteryCharging) {
+      StrCatS (BatteryString, BufferSize / sizeof (CHAR16), L" (Charging)");
+    }
+    HiiSetString (gFrontPagePrivate.HiiHandle, STRING_TOKEN (STR_FRONT_PAGE_BATTERY_STATUS), BatteryString, NULL);
+    FreePool (BatteryString);
+  }
+}
+
+/**
+  Timer callback to update battery string at 1Hz and refresh display.
+
+  @param[in] Event     The timer event.
+  @param[in] Context   Event context (unused).
+
+**/
+STATIC
+VOID
+EFIAPI
+BatteryUpdateTimerCallback (
+  IN EFI_EVENT  Event,
+  IN VOID       *Context
+  )
+{
+  EFI_STATUS  Status;
+  UINT8       BatteryPercentage;
+  BOOLEAN     BatteryPresent;
+  BOOLEAN     BatteryCharging;
+  BOOLEAN     NeedsUpdate;
+
+  // Get current battery status
+  Status = GetBatteryInfoFromProtocol (&BatteryPercentage, &BatteryPresent, &BatteryCharging);
+  if (EFI_ERROR (Status)) {
+    // Battery Status Protocol not available or no battery present
+    return;
+  }
+
+  // Check if battery status has changed
+  NeedsUpdate = (BatteryPercentage != mLastBatteryPercentage) ||
+                (BatteryCharging != mLastBatteryCharging);
+
+  // If status hasn't changed, no need to update
+  if (!NeedsUpdate) {
+    return;
+  }
+
+  // Update the cache and HII string
+  mLastBatteryPercentage = BatteryPercentage;
+  mLastBatteryCharging   = BatteryCharging;
+  UpdateBatteryString (BatteryPercentage, BatteryPresent, BatteryCharging);
+
+  //
+  // The battery status is published as an HII string (the front-page battery
+  // banner line). A graphical display engine such as LVGL polls its banner
+  // labels and repaints this line in place as the string changes, so the
+  // graphical UI stays live without any direct console writes.
+  //
+  // Text-mode consoles do not repaint the banner line when the HII string
+  // changes, so when PcdUiAppFrontPageBatteryToConOut is TRUE we also draw the
+  // status directly to ConOut. This is disabled for graphical display engines,
+  // where a direct ConOut write would paint a stray text overlay on top of the
+  // graphical UI that can also disagree with the graphical banner value.
+  //
+  if (FeaturePcdGet (PcdUiAppFrontPageBatteryToConOut)) {
+    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL  *ConOut;
+    CHAR16                           *BatteryString;
+
+    // Only update screen if front page is currently active
+    if (!mFrontPageActive) {
+      return;
+    }
+
+    // Get the updated string and render it directly on screen
+    BatteryString = HiiGetString (gFrontPagePrivate.HiiHandle, STRING_TOKEN (STR_FRONT_PAGE_BATTERY_STATUS), NULL);
+    if (BatteryString != NULL) {
+      ConOut = gST->ConOut;
+      if (ConOut != NULL) {
+        // Get current cursor position to restore later
+        UINT32  SavedColumn = ConOut->Mode->CursorColumn;
+        UINT32  SavedRow    = ConOut->Mode->CursorRow;
+
+        // Set cursor to start of line 6 (left margin), clear the existing battery string
+        ConOut->SetCursorPosition (ConOut, 1, (UINT32)6);
+        ConOut->OutputString (ConOut, L"                                ");
+
+        // Print the battery string
+        ConOut->SetCursorPosition (ConOut, 1, (UINT32)6);
+        ConOut->OutputString (ConOut, BatteryString);
+
+        // Restore cursor position to avoid interfering with form browser
+        ConOut->SetCursorPosition (ConOut, SavedColumn, SavedRow);
+      }
+
+      FreePool (BatteryString);
+    }
+  }
+}
+
+/**
+  Create battery update timer if battery is present.
+
+  Checks if a battery is present and creates a periodic timer to update
+  the battery status display at 1Hz.
+
+**/
+STATIC
+VOID
+CreateBatteryUpdateTimer (
+  VOID
+  )
+{
+  EFI_STATUS  Status;
+  UINT8       BatteryPercentage;
+  BOOLEAN     BatteryPresent;
+  BOOLEAN     BatteryCharging;
+
+  // Check if battery is present before creating timer
+  Status = GetBatteryInfoFromProtocol (&BatteryPercentage, &BatteryPresent, &BatteryCharging);
+  if (!EFI_ERROR (Status) && BatteryPresent && (BatteryPercentage != 0xFF)) {
+    // Battery is present, create timer
+    Status = gBS->CreateEvent (
+                    EVT_TIMER | EVT_NOTIFY_SIGNAL,
+                    TPL_CALLBACK,
+                    BatteryUpdateTimerCallback,
+                    NULL,
+                    &mBatteryUpdateTimer
+                    );
+    if (!EFI_ERROR (Status) && (mBatteryUpdateTimer != NULL)) {
+      DEBUG ((DEBUG_INFO, "FrontPage: Battery present, creating update timer\n"));
+      Status = gBS->SetTimer (
+                      mBatteryUpdateTimer,
+                      TimerPeriodic,
+                      10000000  // 1 second in 100-nanosecond units
+                      );
+      if (EFI_ERROR (Status)) {
+        DEBUG ((DEBUG_WARN, "FrontPage: Failed to set battery timer: %r\n", Status));
+        gBS->CloseEvent (mBatteryUpdateTimer);
+        mBatteryUpdateTimer = NULL;
+      } else {
+        DEBUG ((DEBUG_INFO, "FrontPage: Battery timer set to periodic 1Hz\n"));
+      }
+    } else {
+      DEBUG ((DEBUG_WARN, "FrontPage: Failed to create battery timer event: %r\n", Status));
+    }
+  } else {
+    DEBUG ((DEBUG_INFO, "FrontPage: No battery present, skipping timer creation\n"));
+  }
+}
+
+/**
+  Initialize HII information for the FrontPage
+
+
+  @retval  EFI_SUCCESS        The operation is successful.
+  @retval  EFI_DEVICE_ERROR   If the dynamic opcode creation failed.
+
+**/
+EFI_STATUS
+InitializeFrontPage (
+  VOID
+  )
+{
+  EFI_STATUS  Status;
+
+  //
+  // Locate Hii relative protocols
+  //
+  Status = gBS->LocateProtocol (&gEfiFormBrowser2ProtocolGuid, NULL, (VOID **)&gFormBrowser2);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  //
+  // Install Device Path Protocol and Config Access protocol to driver handle
+  //
+  gFrontPagePrivate.DriverHandle = NULL;
+  Status                         = gBS->InstallMultipleProtocolInterfaces (
+                                          &gFrontPagePrivate.DriverHandle,
+                                          &gEfiDevicePathProtocolGuid,
+                                          &mFrontPageHiiVendorDevicePath,
+                                          &gEfiHiiConfigAccessProtocolGuid,
+                                          &gFrontPagePrivate.ConfigAccess,
+                                          NULL
+                                          );
+  ASSERT_EFI_ERROR (Status);
+
+  //
+  // Publish our HII data
+  //
+  gFrontPagePrivate.HiiHandle = HiiAddPackages (
+                                  &mFrontPageGuid,
+                                  gFrontPagePrivate.DriverHandle,
+                                  FrontPageVfrBin,
+                                  UiAppStrings,
+                                  NULL
+                                  );
+  ASSERT (gFrontPagePrivate.HiiHandle != NULL);
+
+  //
+  // Updata Front Page banner strings
+  //
+  UpdateFrontPageBannerStrings ();
+
+  //
+  // Update front page menus.
+  //
+  UpdateFrontPageForm ();
+
+  //
+  // Create timer event to update battery at 1Hz only if battery is present
+  //
+  CreateBatteryUpdateTimer ();
+
+  //
+  // Update battery status so it is displayed immediately when FrontPage is opened
+  //
+  BatteryUpdateTimerCallback (NULL, NULL);
+
+  return Status;
+}
+
+/**
+  Call the browser and display the front page
+
+  @return   Status code that will be returned by
+            EFI_FORM_BROWSER2_PROTOCOL.SendForm ().
+
+**/
+EFI_STATUS
+CallFrontPage (
+  VOID
+  )
+{
+  EFI_STATUS                  Status;
+  EFI_BROWSER_ACTION_REQUEST  ActionRequest;
+
+  //
+  // Begin waiting for USER INPUT
+  //
+  REPORT_STATUS_CODE (
+    EFI_PROGRESS_CODE,
+    (EFI_SOFTWARE_DXE_BS_DRIVER | EFI_SW_PC_INPUT_WAIT)
+    );
+
+  ActionRequest = EFI_BROWSER_ACTION_REQUEST_NONE;
+  Status        = gFormBrowser2->SendForm (
+                                   gFormBrowser2,
+                                   &gFrontPagePrivate.HiiHandle,
+                                   1,
+                                   &mFrontPageGuid,
+                                   0,
+                                   NULL,
+                                   &ActionRequest
+                                   );
+  //
+  // Check whether user change any option setting which needs a reset to be effective
+  //
+  if (ActionRequest == EFI_BROWSER_ACTION_REQUEST_RESET) {
+    EnableResetRequired ();
+  }
+
+  return Status;
+}
+
+/**
+  Remove the installed packages from the HiiDatabase.
+
+**/
+VOID
+FreeFrontPage (
+  VOID
+  )
+{
+  EFI_STATUS  Status;
+
+  //
+  // Stop and close battery update timer
+  //
+  if (mBatteryUpdateTimer != NULL) {
+    gBS->SetTimer (mBatteryUpdateTimer, TimerCancel, 0);
+    gBS->CloseEvent (mBatteryUpdateTimer);
+    mBatteryUpdateTimer = NULL;
+  }
+
+  Status = gBS->UninstallMultipleProtocolInterfaces (
+                  gFrontPagePrivate.DriverHandle,
+                  &gEfiDevicePathProtocolGuid,
+                  &mFrontPageHiiVendorDevicePath,
+                  &gEfiHiiConfigAccessProtocolGuid,
+                  &gFrontPagePrivate.ConfigAccess,
+                  NULL
+                  );
+  ASSERT_EFI_ERROR (Status);
+
+  //
+  // Publish our HII data
+  //
+  HiiRemovePackages (gFrontPagePrivate.HiiHandle);
+  if (gFrontPagePrivate.LanguageToken != NULL) {
+    FreePool (gFrontPagePrivate.LanguageToken);
+    gFrontPagePrivate.LanguageToken = NULL;
+  }
+}
+
+/**
+  Convert Processor Frequency Data to a string.
+
+  @param ProcessorFrequency The frequency data to process
+  @param Base10Exponent     The exponent based on 10
+  @param String             The string that is created
+
+**/
+VOID
+ConvertProcessorToString (
+  IN  UINT16  ProcessorFrequency,
+  IN  UINT16  Base10Exponent,
+  OUT CHAR16  **String
+  )
+{
+  CHAR16  *StringBuffer;
+  UINTN   Index;
+  UINTN   DestMax;
+  UINT32  FreqMhz;
+
+  if (Base10Exponent >= 6) {
+    FreqMhz = ProcessorFrequency;
+    for (Index = 0; Index < (UINT32)Base10Exponent - 6; Index++) {
+      FreqMhz *= 10;
+    }
+  } else {
+    FreqMhz = 0;
+  }
+
+  DestMax      = 0x20 / sizeof (CHAR16);
+  StringBuffer = AllocateZeroPool (0x20);
+  ASSERT (StringBuffer != NULL);
+  UnicodeValueToStringS (StringBuffer, sizeof (CHAR16) * DestMax, LEFT_JUSTIFY, FreqMhz / 1000, 3);
+  Index = StrnLenS (StringBuffer, DestMax);
+  StrCatS (StringBuffer, DestMax, L".");
+  UnicodeValueToStringS (
+    StringBuffer + Index + 1,
+    sizeof (CHAR16) * (DestMax - (Index + 1)),
+    PREFIX_ZERO,
+    (FreqMhz % 1000) / 10,
+    2
+    );
+  StrCatS (StringBuffer, DestMax, L" GHz");
+  *String = (CHAR16 *)StringBuffer;
+  return;
+}
+
+/**
+  Convert Memory Size to a string.
+
+  @param MemorySize      The size of the memory to process
+  @param String          The string that is created
+
+**/
+VOID
+ConvertMemorySizeToString (
+  IN  UINT32  MemorySize,
+  OUT CHAR16  **String
+  )
+{
+  CHAR16  *StringBuffer;
+
+  StringBuffer = AllocateZeroPool (0x24);
+  ASSERT (StringBuffer != NULL);
+  UnicodeValueToStringS (StringBuffer, 0x24, LEFT_JUSTIFY, MemorySize, 10);
+  StrCatS (StringBuffer, 0x24 / sizeof (CHAR16), L" MB");
+
+  *String = (CHAR16 *)StringBuffer;
+
+  return;
+}
+
+/**
+
+  Acquire the string associated with the Index from smbios structure and return it.
+  The caller is responsible for free the string buffer.
+
+  @param    OptionalStrStart  The start position to search the string
+  @param    Index             The index of the string to extract
+  @param    String            The string that is extracted
+
+  @retval   EFI_SUCCESS       The function returns EFI_SUCCESS always.
+
+**/
+EFI_STATUS
+GetOptionalStringByIndex (
+  IN      CHAR8   *OptionalStrStart,
+  IN      UINT8   Index,
+  OUT     CHAR16  **String
+  )
+{
+  UINTN  StrSize;
+
+  if (Index == 0) {
+    *String = AllocateZeroPool (sizeof (CHAR16));
+    return EFI_SUCCESS;
+  }
+
+  StrSize = 0;
+  do {
+    Index--;
+    OptionalStrStart += StrSize;
+    StrSize           = AsciiStrSize (OptionalStrStart);
+  } while (OptionalStrStart[StrSize] != 0 && Index != 0);
+
+  if ((Index != 0) || (StrSize == 1)) {
+    //
+    // Meet the end of strings set but Index is non-zero, or
+    // Find an empty string
+    //
+    *String = GetStringById (STRING_TOKEN (STR_MISSING_STRING));
+  } else {
+    *String = AllocatePool (StrSize * sizeof (CHAR16));
+    AsciiStrToUnicodeStrS (OptionalStrStart, *String, StrSize);
+  }
+
+  return EFI_SUCCESS;
+}
+
+/**
+
+  Update the banner information for the Front Page based on Smbios information.
+
+**/
+VOID
+UpdateFrontPageBannerStrings (
+  VOID
+  )
+{
+  UINT8                    StrIndex;
+  CHAR16                   *NewString;
+  EFI_STATUS               Status;
+  EFI_SMBIOS_HANDLE        SmbiosHandle;
+  EFI_SMBIOS_PROTOCOL      *Smbios;
+  SMBIOS_TABLE_TYPE0       *Type0Record;
+  SMBIOS_TABLE_TYPE1       *Type1Record;
+  SMBIOS_TABLE_TYPE4       *Type4Record;
+  SMBIOS_TABLE_TYPE17      *Type17Record;
+  SMBIOS_TABLE_TYPE19      *Type19Record;
+  EFI_SMBIOS_TABLE_HEADER  *Record;
+  UINT16                   MemorySize;
+  UINT32                   ExtendedMemorySize;
+  UINT64                   InstalledMemory;
+  UINT64                   Type17TotalMemory;
+  BOOLEAN                  FoundCpu;
+
+  InstalledMemory = 0;
+  Type17TotalMemory = 0;
+  FoundCpu        = 0;
+
+  //
+  // Update Front Page banner strings base on SmBios Table.
+  //
+  Status = gBS->LocateProtocol (&gEfiSmbiosProtocolGuid, NULL, (VOID **)&Smbios);
+  if (EFI_ERROR (Status)) {
+    //
+    // Smbios protocol not found
+    //
+    return;
+  }
+
+  SmbiosHandle = SMBIOS_HANDLE_PI_RESERVED;
+  Status       = Smbios->GetNext (Smbios, &SmbiosHandle, NULL, &Record, NULL);
+  while (!EFI_ERROR (Status)) {
+    if (Record->Type == SMBIOS_TYPE_BIOS_INFORMATION) {
+      CHAR16  *FwVersion;
+      CHAR16  *FwDate;
+      CHAR16  *TmpBuffer;
+      UINT8   VersionIdx;
+      UINT8   DateIdx;
+      UINTN   BufferSize;
+
+      Type0Record = (SMBIOS_TABLE_TYPE0 *)Record;
+      VersionIdx  = Type0Record->BiosVersion;
+      DateIdx     = Type0Record->BiosReleaseDate;
+
+      GetOptionalStringByIndex ((CHAR8 *)((UINT8 *)Type0Record + Type0Record->Hdr.Length), VersionIdx, &FwVersion);
+      GetOptionalStringByIndex ((CHAR8 *)((UINT8 *)Type0Record + Type0Record->Hdr.Length), DateIdx, &FwDate);
+
+      // Allocate buffer: " FW: " (5) + version + " " (1) + date + null
+      BufferSize = (5 + StrLen (FwVersion) + 1 + StrLen (FwDate) + 1) * sizeof (CHAR16);
+      TmpBuffer  = AllocateZeroPool (BufferSize);
+
+      StrCatS (TmpBuffer, BufferSize / sizeof (CHAR16), L" FW: ");
+      StrCatS (TmpBuffer, BufferSize / sizeof (CHAR16), FwVersion);
+      StrCatS (TmpBuffer, BufferSize / sizeof (CHAR16), L" ");
+      StrCatS (TmpBuffer, BufferSize / sizeof (CHAR16), FwDate);
+
+      HiiSetString (gFrontPagePrivate.HiiHandle, STRING_TOKEN (STR_FRONT_PAGE_BIOS_VERSION), TmpBuffer, NULL);
+
+      FreePool (FwVersion);
+      FreePool (FwDate);
+      FreePool (TmpBuffer);
+    }
+
+    if (Record->Type == SMBIOS_TYPE_SYSTEM_INFORMATION) {
+      CHAR16  *ProductName;
+      CHAR16  *Manufacturer;
+      CHAR16  *DeviceName;
+      CHAR16  *TmpBuffer;
+      UINT8   ProductIdx;
+      UINT8   ManIdx;
+      UINTN   BufferSize;
+      UINTN   DeviceNameBufferSize;
+
+      Type1Record = (SMBIOS_TABLE_TYPE1 *)Record;
+      ProductIdx  = Type1Record->ProductName;
+      ManIdx      = Type1Record->Manufacturer;
+
+      GetOptionalStringByIndex ((CHAR8 *)((UINT8 *)Type1Record + Type1Record->Hdr.Length), ProductIdx, &ProductName);
+      GetOptionalStringByIndex ((CHAR8 *)((UINT8 *)Type1Record + Type1Record->Hdr.Length), ManIdx, &Manufacturer);
+
+      // Check if we have a device name to show
+      // Allocate a buffer large enough for longest device name
+      DeviceNameBufferSize = 128 * sizeof (CHAR16);
+      DeviceName           = AllocateZeroPool (DeviceNameBufferSize);
+      GetDeviceNameFromProduct (ProductName, DeviceNameBufferSize, &DeviceName);
+
+      if (DeviceName[0] != 0) {
+        // Format: "DeviceName (ProductName)"
+        BufferSize = (StrLen (DeviceName) + StrLen (ProductName) + 4) * sizeof (CHAR16);
+        TmpBuffer  = AllocateZeroPool (BufferSize);
+        StrCatS (TmpBuffer, BufferSize / sizeof (CHAR16), DeviceName);
+        StrCatS (TmpBuffer, BufferSize / sizeof (CHAR16), L" (");
+        StrCatS (TmpBuffer, BufferSize / sizeof (CHAR16), ProductName);
+        StrCatS (TmpBuffer, BufferSize / sizeof (CHAR16), L")");
+      } else {
+        // Format: "Manufacturer ProductName"
+        BufferSize = (StrLen (Manufacturer) + StrLen (ProductName) + 2) * sizeof (CHAR16);
+        TmpBuffer  = AllocateZeroPool (BufferSize);
+        StrCatS (TmpBuffer, BufferSize / sizeof (CHAR16), Manufacturer);
+        StrCatS (TmpBuffer, BufferSize / sizeof (CHAR16), L" ");
+        StrCatS (TmpBuffer, BufferSize / sizeof (CHAR16), ProductName);
+      }
+
+      HiiSetString (gFrontPagePrivate.HiiHandle, STRING_TOKEN (STR_FRONT_PAGE_COMPUTER_MODEL), TmpBuffer, NULL);
+
+      FreePool (ProductName);
+      FreePool (Manufacturer);
+      FreePool (DeviceName);
+      FreePool (TmpBuffer);
+    }
+
+    if ((Record->Type == SMBIOS_TYPE_PROCESSOR_INFORMATION) && !FoundCpu) {
+      CHAR16  *TmpBuffer;
+      CHAR16  *OriginalString;
+      CHAR16  *TrimmedString;
+      UINTN   BufferSize;
+      Type4Record = (SMBIOS_TABLE_TYPE4 *)Record;
+      StrIndex = Type4Record->ProcessorVersion;
+      GetOptionalStringByIndex ((CHAR8 *)((UINT8 *)Type4Record + Type4Record->Hdr.Length), StrIndex, &OriginalString);
+
+      // Keep a pointer for trimming while preserving original for freeing
+      TrimmedString = OriginalString;
+
+      // Trim leading spaces
+      while (TrimmedString[0] == 0x20) {
+        TrimmedString = &TrimmedString[1];
+      }
+      // Drop speed information if present in the string, e.g. the
+      // " @ <speed>" suffix in "i3-8130U CPU @ 2.20GHz".
+      CHAR16  *Truncate = StrStr (TrimmedString, L" @ ");
+      if (Truncate != NULL) {
+        *Truncate = L'\0';
+      }
+      // Drop a comma and everything after it, e.g. the
+      // ", 8 cores" suffix in "AMD Ryzen 7 7840U, 8 cores".
+      CHAR16  *Comma = StrStr (TrimmedString, L",");
+      if (Comma != NULL) {
+        *Comma = L'\0';
+      }
+      // Trim any trailing spaces exposed by the truncation above.
+      UINTN  TrimLen = StrLen (TrimmedString);
+      while ((TrimLen > 0) && (TrimmedString[TrimLen - 1] == 0x20)) {
+        TrimmedString[--TrimLen] = L'\0';
+      }
+      // Drop any standalone "CPU" token wherever it occurs, e.g. turn
+      // "Intel(R) Celeron(R) CPU N3160" into "Intel(R) Celeron(R) N3160" and
+      // "Intel(R) Core(TM) i3-8130U CPU" into "Intel(R) Core(TM) i3-8130U".
+      CHAR16  *Cpu = StrStr (TrimmedString, L"CPU");
+      while (Cpu != NULL) {
+        BOOLEAN  AtStart = (Cpu == TrimmedString) || (Cpu[-1] == L' ');
+        BOOLEAN  AtEnd   = (Cpu[3] == L'\0') || (Cpu[3] == L' ');
+        if (AtStart && AtEnd) {
+          CHAR16  *Tail = &Cpu[3];
+          // Collapse the surrounding whitespace so no double or dangling
+          // space remains: prefer consuming the trailing space, otherwise
+          // the leading one.
+          if (*Tail == L' ') {
+            Tail++;
+          } else if ((Cpu > TrimmedString) && (Cpu[-1] == L' ')) {
+            Cpu--;
+          }
+          CopyMem (Cpu, Tail, (StrLen (Tail) + 1) * sizeof (CHAR16));
+          Cpu = StrStr (Cpu, L"CPU");
+        } else {
+          // "CPU" was part of a larger token; skip past it.
+          Cpu = StrStr (&Cpu[3], L"CPU");
+        }
+      }
+      // Trim any trailing spaces left behind by the removal above.
+      TrimLen = StrLen (TrimmedString);
+      while ((TrimLen > 0) && (TrimmedString[TrimLen - 1] == 0x20)) {
+        TrimmedString[--TrimLen] = L'\0';
+      }
+      // Allocate buffer: "CPU: " (5) + trimmed string + null
+      BufferSize = (5 + StrLen (TrimmedString) + 1) * sizeof (CHAR16);
+      TmpBuffer  = AllocateZeroPool (BufferSize);
+      UnicodeSPrint (TmpBuffer, BufferSize, L"%s%s", L"CPU: ", TrimmedString);
+      HiiSetString (gFrontPagePrivate.HiiHandle, STRING_TOKEN (STR_FRONT_PAGE_CPU_MODEL), TmpBuffer, NULL);
+      FreePool (OriginalString);
+      FreePool (TmpBuffer);
+
+      FoundCpu = TRUE;
+    }
+
+    if ( Record->Type == SMBIOS_TYPE_MEMORY_DEVICE ) {
+      Type17Record = (SMBIOS_TABLE_TYPE17 *) Record;
+      MemorySize = Type17Record->Size;
+      ExtendedMemorySize = Type17Record->ExtendedSize;
+
+      // Calculate memory size for this Type 17 record and accumulate
+      // (sum all Type 17 records as fallback if Type 19 is not available)
+      if ( MemorySize != 0xFFFF ) {  // 0xFFFF means "unknown/not installed"
+        if ( MemorySize == 0x7FFF ) {
+          // There is more than (32GiB - 1MiB) of memory. The size is given in Mebibytes.
+          Type17TotalMemory += ExtendedMemorySize;
+        } else if ( MemorySize & 0x8000 ) {
+          // The size is given in Kibibytes.
+          Type17TotalMemory += RShiftU64 (MemorySize & ~0x8000U, 10);
+        } else {
+          // The size is given in Mebibytes.
+          Type17TotalMemory += MemorySize;
+        }
+      }
+    }
+
+    if ( Record->Type == SMBIOS_TYPE_MEMORY_ARRAY_MAPPED_ADDRESS ) {
+      Type19Record = (SMBIOS_TABLE_TYPE19 *)Record;
+      if (Type19Record->StartingAddress != 0xFFFFFFFF ) {
+        InstalledMemory += RShiftU64 (
+                             Type19Record->EndingAddress -
+                             Type19Record->StartingAddress + 1,
+                             10
+                             );
+      } else {
+        InstalledMemory += RShiftU64 (
+                             Type19Record->ExtendedEndingAddress -
+                             Type19Record->ExtendedStartingAddress + 1,
+                             20
+                             );
+      }
+    }
+
+    Status = Smbios->GetNext (Smbios, &SmbiosHandle, NULL, &Record, NULL);
+  }
+
+  //
+  // Use Type 17 as fallback if Type 19 didn't provide memory information
+  //
+  if (InstalledMemory == 0) {
+    InstalledMemory = Type17TotalMemory;
+  }
+
+  //
+  // Now update the total installed RAM size
+  //
+  ConvertMemorySizeToString ((UINT32)InstalledMemory, &NewString);
+  // Allocate buffer: "RAM: " (5) + memory size string + null
+  UINTN   BufferSize = (5 + StrLen (NewString) + 1) * sizeof (CHAR16);
+  CHAR16  *TmpBuffer = AllocateZeroPool (BufferSize);
+  UnicodeSPrint (TmpBuffer, BufferSize, L"%s%s", L"RAM: ", NewString);
+  HiiSetString (gFrontPagePrivate.HiiHandle, STRING_TOKEN (STR_FRONT_PAGE_MEMORY_SIZE), TmpBuffer, NULL);
+  FreePool (NewString);
+  FreePool (TmpBuffer);
+}
+
+/**
+  This function will change video resolution and text mode
+  according to defined setup mode or defined boot mode
+
+  @param  IsSetupMode   Indicate mode is changed to setup mode or boot mode.
+
+  @retval  EFI_SUCCESS  Mode is changed successfully.
+  @retval  Others             Mode failed to be changed.
+
+**/
+EFI_STATUS
+UiSetConsoleMode (
+  BOOLEAN  IsSetupMode
+  )
+{
+  EFI_GRAPHICS_OUTPUT_PROTOCOL          *GraphicsOutput;
+  EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL       *SimpleTextOut;
+  UINTN                                 SizeOfInfo;
+  EFI_GRAPHICS_OUTPUT_MODE_INFORMATION  *Info;
+  UINT32                                MaxGopMode;
+  UINT32                                MaxTextMode;
+  UINT32                                ModeNumber;
+  UINT32                                NewHorizontalResolution;
+  UINT32                                NewVerticalResolution;
+  UINT32                                NewColumns;
+  UINT32                                NewRows;
+  UINTN                                 HandleCount;
+  EFI_HANDLE                            *HandleBuffer;
+  EFI_STATUS                            Status;
+  UINTN                                 Index;
+  UINTN                                 CurrentColumn;
+  UINTN                                 CurrentRow;
+
+  MaxGopMode  = 0;
+  MaxTextMode = 0;
+
+  //
+  // Get current video resolution and text mode
+  //
+  Status = gBS->HandleProtocol (
+                  gST->ConsoleOutHandle,
+                  &gEfiGraphicsOutputProtocolGuid,
+                  (VOID **)&GraphicsOutput
+                  );
+  if (EFI_ERROR (Status)) {
+    GraphicsOutput = NULL;
+  }
+
+  Status = gBS->HandleProtocol (
+                  gST->ConsoleOutHandle,
+                  &gEfiSimpleTextOutProtocolGuid,
+                  (VOID **)&SimpleTextOut
+                  );
+  if (EFI_ERROR (Status)) {
+    SimpleTextOut = NULL;
+  }
+
+  if ((GraphicsOutput == NULL) || (SimpleTextOut == NULL)) {
+    return EFI_UNSUPPORTED;
+  }
+
+  if (IsSetupMode) {
+    //
+    // The required resolution and text mode is setup mode.
+    //
+    NewHorizontalResolution = mSetupHorizontalResolution;
+    NewVerticalResolution   = mSetupVerticalResolution;
+    NewColumns              = mSetupTextModeColumn;
+    NewRows                 = mSetupTextModeRow;
+  } else {
+    //
+    // The required resolution and text mode is boot mode.
+    //
+    NewHorizontalResolution = mBootHorizontalResolution;
+    NewVerticalResolution   = mBootVerticalResolution;
+    NewColumns              = mBootTextModeColumn;
+    NewRows                 = mBootTextModeRow;
+  }
+
+  if (GraphicsOutput != NULL) {
+    MaxGopMode = GraphicsOutput->Mode->MaxMode;
+  }
+
+  if (SimpleTextOut != NULL) {
+    MaxTextMode = SimpleTextOut->Mode->MaxMode;
+  }
+
+  //
+  // 1. If current video resolution is same with required video resolution,
+  //    video resolution need not be changed.
+  //    1.1. If current text mode is same with required text mode, text mode need not be changed.
+  //    1.2. If current text mode is different from required text mode, text mode need be changed.
+  // 2. If current video resolution is different from required video resolution, we need restart whole console drivers.
+  //
+  for (ModeNumber = 0; ModeNumber < MaxGopMode; ModeNumber++) {
+    Status = GraphicsOutput->QueryMode (
+                               GraphicsOutput,
+                               ModeNumber,
+                               &SizeOfInfo,
+                               &Info
+                               );
+    if (!EFI_ERROR (Status)) {
+      if ((Info->HorizontalResolution == NewHorizontalResolution) &&
+          (Info->VerticalResolution == NewVerticalResolution))
+      {
+        if ((GraphicsOutput->Mode->Info->HorizontalResolution == NewHorizontalResolution) &&
+            (GraphicsOutput->Mode->Info->VerticalResolution == NewVerticalResolution))
+        {
+          //
+          // Current resolution is same with required resolution, check if text mode need be set
+          //
+          Status = SimpleTextOut->QueryMode (SimpleTextOut, SimpleTextOut->Mode->Mode, &CurrentColumn, &CurrentRow);
+          ASSERT_EFI_ERROR (Status);
+          if ((CurrentColumn == NewColumns) && (CurrentRow == NewRows)) {
+            //
+            // If current text mode is same with required text mode. Do nothing
+            //
+            FreePool (Info);
+            return EFI_SUCCESS;
+          } else {
+            //
+            // If current text mode is different from required text mode.  Set new video mode
+            //
+            for (Index = 0; Index < MaxTextMode; Index++) {
+              Status = SimpleTextOut->QueryMode (SimpleTextOut, Index, &CurrentColumn, &CurrentRow);
+              if (!EFI_ERROR (Status)) {
+                if ((CurrentColumn == NewColumns) && (CurrentRow == NewRows)) {
+                  //
+                  // Required text mode is supported, set it.
+                  //
+                  Status = SimpleTextOut->SetMode (SimpleTextOut, Index);
+                  ASSERT_EFI_ERROR (Status);
+                  //
+                  // Update text mode PCD.
+                  //
+                  Status = PcdSet32S (PcdConOutColumn, mSetupTextModeColumn);
+                  ASSERT_EFI_ERROR (Status);
+                  Status = PcdSet32S (PcdConOutRow, mSetupTextModeRow);
+                  ASSERT_EFI_ERROR (Status);
+                  FreePool (Info);
+                  return EFI_SUCCESS;
+                }
+              }
+            }
+
+            if (Index == MaxTextMode) {
+              //
+              // If required text mode is not supported, return error.
+              //
+              FreePool (Info);
+              return EFI_UNSUPPORTED;
+            }
+          }
+        } else {
+          //
+          // If current video resolution is not same with the new one, set new video resolution.
+          // In this case, the driver which produces simple text out need be restarted.
+          //
+          Status = GraphicsOutput->SetMode (GraphicsOutput, ModeNumber);
+          if (!EFI_ERROR (Status)) {
+            FreePool (Info);
+            break;
+          }
+        }
+      }
+
+      FreePool (Info);
+    }
+  }
+
+  if (ModeNumber == MaxGopMode) {
+    //
+    // If the resolution is not supported, return error.
+    //
+    return EFI_UNSUPPORTED;
+  }
+
+  //
+  // Set PCD to Inform GraphicsConsole to change video resolution.
+  // Set PCD to Inform Consplitter to change text mode.
+  //
+  Status = PcdSet32S (PcdVideoHorizontalResolution, NewHorizontalResolution);
+  ASSERT_EFI_ERROR (Status);
+  Status = PcdSet32S (PcdVideoVerticalResolution, NewVerticalResolution);
+  ASSERT_EFI_ERROR (Status);
+  Status = PcdSet32S (PcdConOutColumn, NewColumns);
+  ASSERT_EFI_ERROR (Status);
+  Status = PcdSet32S (PcdConOutRow, NewRows);
+  ASSERT_EFI_ERROR (Status);
+
+  //
+  // Video mode is changed, so restart graphics console driver and higher level driver.
+  // Reconnect graphics console driver and higher level driver.
+  // Locate all the handles with GOP protocol and reconnect it.
+  //
+  Status = gBS->LocateHandleBuffer (
+                  ByProtocol,
+                  &gEfiSimpleTextOutProtocolGuid,
+                  NULL,
+                  &HandleCount,
+                  &HandleBuffer
+                  );
+  if (!EFI_ERROR (Status)) {
+    for (Index = 0; Index < HandleCount; Index++) {
+      gBS->DisconnectController (HandleBuffer[Index], NULL, NULL);
+    }
+
+    for (Index = 0; Index < HandleCount; Index++) {
+      gBS->ConnectController (HandleBuffer[Index], NULL, NULL, TRUE);
+    }
+
+    if (HandleBuffer != NULL) {
+      FreePool (HandleBuffer);
+    }
+  }
+
+  return EFI_SUCCESS;
+}
+
+/**
+  The user Entry Point for Application. The user code starts with this function
+  as the real entry point for the image goes into a library that calls this
+  function.
+
+  @param[in] ImageHandle    The firmware allocated handle for the EFI image.
+  @param[in] SystemTable    A pointer to the EFI System Table.
+
+  @retval EFI_SUCCESS       The entry point is executed successfully.
+  @retval other             Some error occurs when executing this entry point.
+
+**/
+EFI_STATUS
+EFIAPI
+InitializeUserInterface (
+  IN EFI_HANDLE        ImageHandle,
+  IN EFI_SYSTEM_TABLE  *SystemTable
+  )
+{
+  EFI_HII_HANDLE                   HiiHandle;
+  EFI_STATUS                       Status;
+  EFI_GRAPHICS_OUTPUT_PROTOCOL     *GraphicsOutput;
+  EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL  *SimpleTextOut;
+  UINTN                            BootTextColumn;
+  UINTN                            BootTextRow;
+
+  if (!mModeInitialized) {
+    //
+    // After the console is ready, get current video resolution
+    // and text mode before launching setup at first time.
+    //
+    Status = gBS->HandleProtocol (
+                    gST->ConsoleOutHandle,
+                    &gEfiGraphicsOutputProtocolGuid,
+                    (VOID **)&GraphicsOutput
+                    );
+    if (EFI_ERROR (Status)) {
+      GraphicsOutput = NULL;
+    }
+
+    Status = gBS->HandleProtocol (
+                    gST->ConsoleOutHandle,
+                    &gEfiSimpleTextOutProtocolGuid,
+                    (VOID **)&SimpleTextOut
+                    );
+    if (EFI_ERROR (Status)) {
+      SimpleTextOut = NULL;
+    }
+
+    if (GraphicsOutput != NULL) {
+      //
+      // Get current video resolution and text mode.
+      //
+      mBootHorizontalResolution = GraphicsOutput->Mode->Info->HorizontalResolution;
+      mBootVerticalResolution   = GraphicsOutput->Mode->Info->VerticalResolution;
+    }
+
+    if (SimpleTextOut != NULL) {
+      Status = SimpleTextOut->QueryMode (
+                                SimpleTextOut,
+                                SimpleTextOut->Mode->Mode,
+                                &BootTextColumn,
+                                &BootTextRow
+                                );
+      mBootTextModeColumn = (UINT32)BootTextColumn;
+      mBootTextModeRow    = (UINT32)BootTextRow;
+    }
+
+    //
+    // Get user defined text mode for setup.
+    //
+    mSetupHorizontalResolution = PcdGet32 (PcdSetupVideoHorizontalResolution);
+    mSetupVerticalResolution   = PcdGet32 (PcdSetupVideoVerticalResolution);
+    mSetupTextModeColumn       = PcdGet32 (PcdSetupConOutColumn);
+    mSetupTextModeRow          = PcdGet32 (PcdSetupConOutRow);
+
+    mModeInitialized = TRUE;
+  }
+
+  gBS->SetWatchdogTimer (0x0000, 0x0000, 0x0000, NULL);
+  gST->ConOut->ClearScreen (gST->ConOut);
+
+  //
+  // Install customized fonts needed by Front Page
+  //
+  HiiHandle = ExportFonts ();
+  if (HiiHandle == NULL) {
+    ASSERT (HiiHandle != NULL);
+    return EFI_NOT_FOUND;
+  }
+
+  InitializeStringSupport ();
+
+  UiSetConsoleMode (TRUE);
+  UiEntry (FALSE);
+  UiSetConsoleMode (FALSE);
+
+  UninitializeStringSupport ();
+  HiiRemovePackages (HiiHandle);
+
+  return EFI_SUCCESS;
+}
+
+/**
+  This function is the main entry of the UI entry.
+  The function will present the main menu of the system UI.
+
+  @param ConnectAllHappened Caller passes the value to UI to avoid unnecessary connect-all.
+
+**/
+VOID
+EFIAPI
+UiEntry (
+  IN BOOLEAN  ConnectAllHappened
+  )
+{
+  EFI_STATUS              Status;
+  EFI_BOOT_LOGO_PROTOCOL  *BootLogo;
+
+  //
+  // Enter Setup page.
+  //
+  REPORT_STATUS_CODE (
+    EFI_PROGRESS_CODE,
+    (EFI_SOFTWARE_DXE_BS_DRIVER | EFI_SW_PC_USER_SETUP)
+    );
+
+  //
+  // Indicate if the connect all has been performed before.
+  // If has not been performed before, do here.
+  //
+  if (!ConnectAllHappened) {
+    EfiBootManagerConnectAll ();
+  }
+
+  //
+  // The boot option enumeration time is acceptable in Ui driver
+  //
+  EfiBootManagerRefreshAllBootOption ();
+
+  //
+  // Boot Logo is corrupted, report it using Boot Logo protocol.
+  //
+  Status = gBS->LocateProtocol (&gEfiBootLogoProtocolGuid, NULL, (VOID **)&BootLogo);
+  if (!EFI_ERROR (Status) && (BootLogo != NULL)) {
+    BootLogo->SetBootLogo (BootLogo, NULL, 0, 0, 0, 0);
+  }
+
+  InitializeFrontPage ();
+
+  CallFrontPage ();
+
+  FreeFrontPage ();
+
+  //
+  // Will leave browser, check any reset required change is applied? if yes, reset system
+  //
+  SetupResetReminder ();
+}
+
+//
+//  Following are BDS Lib functions which contain all the code about setup browser reset reminder feature.
+//  Setup Browser reset reminder feature is that an reset reminder will be given before user leaves the setup browser  if
+//  user change any option setting which needs a reset to be effective, and  the reset will be applied according to  the user selection.
+//
+
+/**
+  Record the info that  a reset is required.
+  A  module boolean variable is used to record whether a reset is required.
+
+**/
+VOID
+EFIAPI
+EnableResetRequired (
+  VOID
+  )
+{
+  mResetRequired = TRUE;
+}
+
+/**
+  Check if  user changed any option setting which needs a system reset to be effective.
+
+**/
+BOOLEAN
+EFIAPI
+IsResetRequired (
+  VOID
+  )
+{
+  return mResetRequired;
+}
+
+/**
+  Check whether a reset is needed, and finish the reset reminder feature.
+  If a reset is needed, Popup a menu to notice user, and finish the feature
+  according to the user selection.
+
+**/
+VOID
+EFIAPI
+SetupResetReminder (
+  VOID
+  )
+{
+  EFI_STATUS               Status;
+  EFI_HII_POPUP_PROTOCOL   *HiiPopup;
+  EFI_HII_POPUP_SELECTION  UserSelection;
+
+  //
+  // check any reset required change is applied? if yes, reset system
+  //
+  if (IsResetRequired ()) {
+    //
+    // Notice the user via the active display engine's popup (a graphical dialog
+    // under a graphical display engine, the standard HII popup in text mode)
+    // instead of the legacy console CreatePopUp overlay, then reset.
+    //
+    Status = gBS->LocateProtocol (&gEfiHiiPopupProtocolGuid, NULL, (VOID **)&HiiPopup);
+    if (!EFI_ERROR (Status)) {
+      HiiPopup->CreatePopup (
+                  HiiPopup,
+                  EfiHiiPopupStyleInfo,
+                  EfiHiiPopupTypeOk,
+                  gFrontPagePrivate.HiiHandle,
+                  STRING_TOKEN (STR_RESET_REMINDER_POPUP),
+                  &UserSelection
+                  );
+    }
+
+    gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
+  }
+}

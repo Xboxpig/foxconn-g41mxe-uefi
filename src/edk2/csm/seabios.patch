@@ -1,0 +1,25 @@
+diff --git a/src/fw/csm.c b/src/fw/csm.c
+index 579debdc..a3d6260f 100644
+--- a/src/fw/csm.c
++++ b/src/fw/csm.c
+@@ -341,7 +341,19 @@ int csm_bootprio_ata(struct pci_device *pci, int chanid, int slave)
+     if (!csm_boot_table)
+         return -1;
+     BBS_TABLE *bbs = (void *)csm_boot_table->BbsTable;
+-    int index = 1 + (chanid * 2) + slave;
++    // The Framework BBS table has two channels per PCI IDE controller.
++    // Looking only at chanid aliases ICH7 PATA and SATA to the same priorities.
++    int hdd;
++    for (hdd = 0; hdd + chanid < MAX_IDE_CONTROLLER; hdd += 2) {
++        HDD_INFO *info = &csm_boot_table->HddInfo[hdd];
++        if (pci && pci->bdf == pci_to_bdf(info->Bus, info->Device, info->Function))
++            break;
++    }
++    if (hdd + chanid >= MAX_IDE_CONTROLLER)
++        return -1;
++    int index = 1 + ((hdd + chanid) * 2) + slave;
++    if (index >= csm_boot_table->NumberBbsEntries)
++        return -1;
+     dprintf(3, "CSM bootprio for ATA%d,%d (index %d) is %d\n", chanid, slave,
+             index, bbs[index].BootPriority);
+     return csm_prio_to_seabios(bbs[index].BootPriority);

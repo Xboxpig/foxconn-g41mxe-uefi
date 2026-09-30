@@ -1,0 +1,11 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#ifndef __NORTHBRIDGE_INTEL_GM45_MEMMAP_H__
+#define __NORTHBRIDGE_INTEL_GM45_MEMMAP_H__
+
+#define IOMMU_BASE_VC1		0xfed90000
+#define IOMMU_BASE_GFX		0xfed91000
+#define IOMMU_BASE_ME		0xfed92000
+#define IOMMU_BASE_VC0		0xfed93000
+
+#endif /* __NORTHBRIDGE_INTEL_GM45_MEMMAP_H__ */

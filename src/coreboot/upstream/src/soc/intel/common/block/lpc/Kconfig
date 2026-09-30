@@ -1,0 +1,32 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config SOC_INTEL_COMMON_BLOCK_LPC
+	bool
+	help
+	  Use common LPC code for platform. Only soc specific code needs to
+	  be implemented as per requirement.
+
+config SOC_INTEL_COMMON_BLOCK_LPC_COMB_ENABLE
+	depends on SOC_INTEL_COMMON_BLOCK_LPC && DRIVERS_UART_8250IO
+	bool
+	default n
+	help
+	  By default COMA range to LPC is enable. COMB range to LPC is optional
+	  and should select based on platform dedicated selection.
+
+config SOC_INTEL_COMMON_BLOCK_LPC_MIRROR_TO_GPMR
+	bool
+	depends on SOC_INTEL_COMMON_BLOCK_GPMR
+	help
+	  Mirror LPC registers for IO/MMIO to their corresponding GPMR registers.
+	  Required for platforms starting from SPT.
+
+config SOC_INTEL_COMMON_BLOCK_LPC_GPMR_IOC_1MB
+	bool
+	depends on SOC_INTEL_COMMON_BLOCK_LPC_MIRROR_TO_GPMR && SOC_INTEL_COMMON_BLOCK_IOC
+	help
+	  Select this for platforms where IOC uses the 1MB GPMR/LGMR register
+	  encoding. IOC and eSPI do not use identical address field definitions:
+	  IOC encodes the address in bits [27:16], while eSPI uses bits [31:16].
+	  Enabling this option ensures LPC->GPMR mirroring uses IOC-compatible
+	  encoding instead of assuming the eSPI field layout.

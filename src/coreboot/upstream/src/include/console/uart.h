@@ -1,0 +1,116 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#ifndef CONSOLE_UART_H
+#define CONSOLE_UART_H
+
+#include <stdint.h>
+#include <types.h>
+
+/* Return the clock frequency UART uses as reference clock for
+ * baudrate generator. */
+unsigned int uart_platform_refclk(void);
+
+#if CONFIG(UART_OVERRIDE_BAUDRATE)
+/* Return the baudrate, define this in your platform when using the above
+   configuration. */
+unsigned int get_uart_baudrate(void);
+#else
+static inline unsigned int get_uart_baudrate(void)
+{
+	return CONFIG_TTYS0_BAUD;
+}
+#endif
+
+#if CONFIG(OVERRIDE_UART_FOR_CONSOLE)
+/* Return the index of uart port, define this in your platform
+ * when need to use variables to override the index.
+ */
+unsigned int get_uart_for_console(void);
+#else
+static inline unsigned int get_uart_for_console(void)
+{
+	return CONFIG_UART_FOR_CONSOLE;
+}
+#endif
+
+/* Returns the oversample divisor multiplied by any other divisors that act
+ * on the input clock
+ */
+unsigned int uart_input_clock_divider(void);
+
+/* Returns the divisor value for a given baudrate.
+ * The formula to satisfy is:
+ *    refclk / divisor = baudrate * oversample
+ */
+unsigned int uart_calc_baudrate_divisor(unsigned int baudrate,
+	unsigned int refclk, unsigned int oversample);
+
+/* Same as above but with the most commonly used parameters */
+static inline unsigned int uart_get_baudrate_divisor(void)
+{
+	return uart_calc_baudrate_divisor(get_uart_baudrate(),
+		uart_platform_refclk(), uart_input_clock_divider());
+}
+
+/* Bitbang out one byte on an 8n1 UART through the output function set_tx(). */
+void uart_bitbang_tx_byte(unsigned char data, void (*set_tx)(int line_state));
+
+void uart_init(unsigned int idx);
+void uart_tx_byte(unsigned int idx, unsigned char data);
+void uart_tx_flush(unsigned int idx);
+unsigned char uart_rx_byte(unsigned int idx);
+
+uintptr_t uart_platform_base(unsigned int idx);
+
+static inline void *uart_platform_baseptr(unsigned int idx)
+{
+	return (void *)uart_platform_base(idx);
+}
+
+void oxford_remap(unsigned int new_base);
+
+#define __CONSOLE_SERIAL_SUPPORT__ \
+	(CONFIG(CONSOLE_SERIAL) || CONFIG(CONSOLE_SERIAL_RUNTIME))
+
+#define __CONSOLE_SERIAL_ENABLE__	(__CONSOLE_SERIAL_SUPPORT__ && \
+	(ENV_BOOTBLOCK || ENV_SEPARATE_ROMSTAGE || ENV_RAMSTAGE || ENV_SEPARATE_VERSTAGE \
+	 || ENV_POSTCAR || (ENV_SMM && CONFIG(DEBUG_SMI))))
+
+/*
+ * Whether the serial console should be used this stage.
+ * With CONSOLE_SERIAL_RUNTIME, reads option "serial_console" (fallback:
+ * CONSOLE_SERIAL). Result is cached for the life of the stage.
+ * USE_UEFI_VARIABLE_STORE stubs option reads in separate verstage/postcar,
+ * so those stages use the CONSOLE_SERIAL fallback only.
+ */
+#if __CONSOLE_SERIAL_SUPPORT__
+bool console_serial_enabled(void);
+#else
+static inline bool console_serial_enabled(void) { return false; }
+#endif
+
+#if __CONSOLE_SERIAL_ENABLE__
+void __uart_init(void);
+void __uart_tx_byte(u8 data);
+void __uart_tx_flush(void);
+#else
+static inline void __uart_init(void)		{}
+static inline void __uart_tx_byte(u8 data)	{}
+static inline void __uart_tx_flush(void)	{}
+#endif
+
+#if CONFIG(GDB_STUB) && (ENV_ROMSTAGE_OR_BEFORE || ENV_RAMSTAGE)
+#define CONF_UART_FOR_GDB	CONFIG_UART_FOR_CONSOLE
+static inline void __gdb_hw_init(void)	{ uart_init(CONF_UART_FOR_GDB); }
+static inline void __gdb_tx_byte(u8 data)
+{
+	uart_tx_byte(CONF_UART_FOR_GDB, data);
+}
+static inline void __gdb_tx_flush(void)	{ uart_tx_flush(CONF_UART_FOR_GDB); }
+static inline u8 __gdb_rx_byte(void)
+{
+	return uart_rx_byte(CONF_UART_FOR_GDB);
+}
+#endif
+
+#endif /* CONSOLE_UART_H */

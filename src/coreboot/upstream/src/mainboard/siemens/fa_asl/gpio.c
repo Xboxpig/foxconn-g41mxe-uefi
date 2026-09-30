@@ -1,0 +1,67 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#include <baseboard/gpio.h>
+#include <baseboard/variants.h>
+
+static const struct pad_config gpio_table[] = {
+
+	/* CORE_VID0 */
+	PAD_CFG_NF(GPP_B0, NONE, DEEP, NF1),
+	/* CORE_VID2 */
+	PAD_CFG_NF(GPP_B1, NONE, DEEP, NF1),
+	/* #VALERT */
+	PAD_CFG_NF(GPP_B2, NONE, DEEP, NF1),
+	/* SLP_S0# */
+	PAD_CFG_NF(GPP_B12, NONE, DEEP, NF1),
+	/* PLTRST## */
+	PAD_CFG_NF(GPP_B13, NONE, DEEP, NF1),
+
+	/* GPP_D */
+	PAD_CFG_GPO(GPP_D0, 0, DEEP),
+	PAD_CFG_GPO(GPP_D1, 0, DEEP),
+	PAD_CFG_GPI(GPP_D13, NONE, DEEP),
+
+	/* GPP_E */
+	PAD_CFG_GPI(GPP_E0, NONE, DEEP),
+	PAD_CFG_GPO(GPP_E8, 1, DEEP),
+	PAD_CFG_NF(GPP_E9, NONE, PWROK, NF1),
+	/* The following three bits are used to define the SPD data set slot in CBFS */
+	PAD_CFG_GPI(GPP_E10, NONE, DEEP),
+	PAD_CFG_GPI(GPP_E12, NONE, DEEP),
+	PAD_CFG_GPI(GPP_E17, NONE, DEEP),
+
+	/* GPP_F */
+	PAD_CFG_NF(GPP_F1, UP_20K, DEEP, NF2),
+	PAD_CFG_NF(GPP_F2, UP_20K, DEEP, NF2),
+	PAD_CFG_NF(GPP_F3, UP_20K, DEEP, NF1),
+	PAD_CFG_NF(GPP_F22, NONE, DEEP, NF1),
+	PAD_CFG_NF(GPP_F23, NONE, DEEP, NF2),
+
+	/* I2C0_SDA */
+	PAD_CFG_NF(GPP_H4, NONE, DEEP, NF1),
+	/* I2C0_SCL */
+	PAD_CFG_NF(GPP_H5, NONE, DEEP, NF1),
+	/* UART0_RXD */
+	PAD_CFG_NF(GPP_H10, NONE, DEEP, NF2),
+	/* UART0_TXD */
+	PAD_CFG_NF(GPP_H11, NONE, DEEP, NF2),
+	PAD_CFG_GPI(GPP_H12, NONE, DEEP),
+	/* PROC_C10_GATE# */
+	PAD_CFG_NF(GPP_H18, NONE, DEEP, NF1),
+
+
+	/* GPD */
+	PAD_CFG_NF(GPD0, NONE, DEEP, NF1),
+	PAD_CFG_NF(GPD1, NONE, DEEP, NF1),
+	PAD_CFG_NF(GPD3, NONE, DEEP, NF1),
+	PAD_CFG_NF(GPD4, NONE, DEEP, NF1),
+	PAD_CFG_NF(GPD5, NONE, DEEP, NF1),
+	PAD_CFG_NF(GPD6, NONE, DEEP, NF1),
+	PAD_CFG_GPO(GPD9, 1, DEEP),
+	PAD_CFG_NF(GPD10, NONE, DEEP, NF1),
+};
+
+void variant_configure_gpio_pads(void)
+{
+	gpio_configure_pads(gpio_table, ARRAY_SIZE(gpio_table));
+}

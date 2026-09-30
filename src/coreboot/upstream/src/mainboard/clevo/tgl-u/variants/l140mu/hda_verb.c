@@ -1,0 +1,87 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+
+#include <device/azalia_device.h>
+#include <stdint.h>
+
+static const u32 realtek_alc293_verbs[] = {
+	AZALIA_SUBVENDOR(0, 0x155814a1),
+
+	/* Microphone (display lid), vendor value: 0x90a60130 */
+	AZALIA_PIN_CFG(0, 0x12, AZALIA_PIN_DESC(
+			AZALIA_INTEGRATED,
+			AZALIA_MOBILE_LID_INSIDE,	/* vendor: AZALIA_INTERNAL */
+			AZALIA_MIC_IN,
+			AZALIA_OTHER_DIGITAL,
+			AZALIA_COLOR_UNKNOWN,
+			AZALIA_NO_JACK_PRESENCE_DETECT,
+			3, 0)
+	),
+
+	/* Integrated speakers, vendor value: 0x90170110 */
+	AZALIA_PIN_CFG(0, 0x14, AZALIA_PIN_DESC(
+			AZALIA_INTEGRATED,
+			AZALIA_LOCATION_OTHER | AZALIA_BOTTOM,	/* vendor: AZALIA_INTERNAL */
+			AZALIA_SPEAKER,
+			AZALIA_OTHER_ANALOG,
+			AZALIA_COLOR_UNKNOWN,
+			AZALIA_NO_JACK_PRESENCE_DETECT,
+			1, 0)
+	),
+
+	/* Headphones, vendor value: 0x02211020 */
+	AZALIA_PIN_CFG(0, 0x15, AZALIA_PIN_DESC(
+			AZALIA_JACK,
+			/* vendor: AZALIA_EXTERNAL_PRIMARY_CHASSIS | AZALIA_FRONT */
+			AZALIA_EXTERNAL_PRIMARY_CHASSIS | AZALIA_RIGHT,
+			AZALIA_HP_OUT,
+			AZALIA_STEREO_MONO_1_8,
+			AZALIA_BLACK,
+			AZALIA_JACK_PRESENCE_DETECT,
+			2, 0)
+	),
+
+	/* ext. Microphone, vendor value: 0x411111f0, linux override: 0x01a1913c */
+	AZALIA_PIN_CFG(0, 0x1a, AZALIA_PIN_DESC(
+			AZALIA_JACK,
+			/* linux: AZALIA_EXTERNAL_PRIMARY_CHASSIS | AZALIA_REAR */
+			AZALIA_EXTERNAL_PRIMARY_CHASSIS | AZALIA_RIGHT,
+			AZALIA_MIC_IN,
+			AZALIA_STEREO_MONO_1_8,
+			AZALIA_BLACK,	/* linux: AZALIA_PINK */
+			AZALIA_NO_JACK_PRESENCE_DETECT,
+			3, 12)
+	),
+
+	/* PCBEEP, vendor value: 0x41748245 */
+	AZALIA_PIN_CFG(0, 0x1d, AZALIA_PIN_DESC(
+			AZALIA_INTEGRATED,			/* vendor: AZALIA_NC */
+			AZALIA_INTERNAL,			/* vendor: AZALIA_EXTERNAL_PRIMARY_CHASSIS | AZALIA_REAR */
+			AZALIA_DEVICE_OTHER,			/* vendor: AZALIA_MODEM_HANDSET_SIDE */
+			AZALIA_OTHER_ANALOG,			/* vendor: AZALIA_RCA */
+			AZALIA_COLOR_UNKNOWN,			/* vendor: AZALIA_PURPLE */
+			AZALIA_NO_JACK_PRESENCE_DETECT,		/* vendor: 2 */
+			4, 5)
+	),
+
+	AZALIA_PIN_CFG(0, 0x13, 0x40000000),	/* NC, but different from 0x411111f0 */
+	AZALIA_PIN_CFG(0, 0x16, AZALIA_PIN_CFG_NC(0)),
+	AZALIA_PIN_CFG(0, 0x18, AZALIA_PIN_CFG_NC(0)),
+	AZALIA_PIN_CFG(0, 0x19, AZALIA_PIN_CFG_NC(0)),
+	AZALIA_PIN_CFG(0, 0x1b, AZALIA_PIN_CFG_NC(0)),
+	AZALIA_PIN_CFG(0, 0x1e, AZALIA_PIN_CFG_NC(0)),
+};
+
+const u32 pc_beep_verbs[] = {};
+
+static struct azalia_codec mainboard_azalia_codecs[] = {
+	{
+		.name         = "Realtek ALC293",
+		.vendor_id    = 0x10ec0293,
+		.subsystem_id = 0x155814a1,
+		.address      = 0,
+		.verbs        = realtek_alc293_verbs,
+		.verb_count   = ARRAY_SIZE(realtek_alc293_verbs),
+	},
+};
+
+AZALIA_ARRAY_SIZES;

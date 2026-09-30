@@ -1,0 +1,208 @@
+## SPDX-License-Identifier: GPL-2.0-only
+ifeq ($(CONFIG_SOC_AMD_TURIN_POC),y)
+
+all-y		+= gpio.c
+all-y		+= i2c.c
+all-y		+= i3c.c
+all-y		+= uart.c
+all-y		+= aoac.c
+
+all-y		+= lpc.c
+smm-y		+= lpc.c
+
+bootblock-y	+= early_fch.c
+
+ramstage-y	+= acpi.c
+ramstage-y	+= chip.c
+ramstage-y	+= cpu.c
+ramstage-y	+= domain.c
+ramstage-y	+= fch.c
+ramstage-y	+= root_complex.c
+ramstage-y	+= mca.c
+
+smm-y		+= root_complex.c
+smm-$(CONFIG_DEBUG_SMI) += uart.c
+
+CPPFLAGS_common += -I$(src)/soc/amd/turin_poc/acpi
+CPPFLAGS_common += -I$(src)/soc/amd/turin_poc/include
+
+ifeq ($(call int-gt, $(CONFIG_ROM_SIZE) 0x1000000), 1)
+CBFSTOOL_ADD_CMD_OPTIONS+= --mmap 0:0xff000000:0x1000000
+endif
+
+ifneq ($(call strip_quotes, $(CONFIG_AMDFW_CONFIG_FILE)),)
+#
+# PSP Directory Table items
+#
+# Certain ordering requirements apply, however these are ensured by amdfwtool.
+# For more information see "AMD Platform Security Processor BIOS Implementation
+# Guide for Server EPYC Processors" #57299
+#
+
+FIRMWARE_LOCATION=$(shell grep -e FIRMWARE_LOCATION $(CONFIG_AMDFW_CONFIG_FILE) | awk '{print $$2}')
+
+ifeq ($(CONFIG_PSP_DISABLE_POSTCODES),y)
+PSP_SOFTFUSE_BITS += 7
+endif
+
+ifeq ($(CONFIG_PSP_UNLOCK_SECURE_DEBUG),y)
+# Enable secure debug unlock
+PSP_SOFTFUSE_BITS += 0
+OPT_TOKEN_UNLOCK="--token-unlock"
+endif
+
+# Use additional Soft Fuse bits specified in Kconfig
+PSP_SOFTFUSE_BITS += $(call strip_quotes, $(CONFIG_PSP_SOFTFUSE_BITS))
+
+# type = 0x38
+PSP_SEV_NVRAM_BASE=$(call get_fmap_value,FMAP_SECTION_PSP_SEV_NVRAM_START)
+PSP_SEV_NVRAM_SIZE=$(call get_fmap_value,FMAP_SECTION_PSP_SEV_NVRAM_SIZE)
+
+# type = 0x3a
+ifeq ($(CONFIG_HAVE_PSP_WHITELIST_FILE),y)
+PSP_WHITELIST_FILE=$(CONFIG_PSP_WHITELIST_FILE)
+endif
+
+# type = 0x55
+SPL_TABLE_FILE=$(CONFIG_SPL_TABLE_FILE)
+
+#
+# BIOS Directory Table items - proper ordering is managed by amdfwtool
+#
+
+# type = 0x60
+PSP_APCB_FILES=$(APCB_SOURCES) $(APCB1_SOURCES) $(APCB_SOURCES_RECOVERY) $(APCB_SOURCES_RECOVERY1) $(APCB_SOURCES_RECOVERY2)
+
+# type = 0x61
+PSP_APOB_BASE=$(CONFIG_PSP_APOB_DRAM_ADDRESS)
+
+# type = 0x62
+PSP_BIOSBIN_FILE=$(obj)/amd_biospsp.img
+PSP_ELF_FILE=$(objcbfs)/bootblock_fixed_data.elf
+PSP_BIOSBIN_SIZE=$(shell $(READELF_bootblock) -Wl $(PSP_ELF_FILE) | grep LOAD | awk '{print $$5}')
+PSP_BIOSBIN_DEST=$(shell $(READELF_bootblock) -Wl $(PSP_ELF_FILE) | grep LOAD | awk '{print $$3}')
+
+ifneq ($(CONFIG_SOC_AMD_COMMON_BLOCK_APOB_NV_DISABLE),y)
+# type = 0x63 - construct APOB NV base/size from flash map
+# The flashmap section used for this is expected to be named RW_MRC_CACHE
+# Size should be 0xD0000
+APOB_NV_SIZE=$(call get_fmap_value,FMAP_SECTION_RW_MRC_CACHE_SIZE)
+APOB_NV_BASE=$(call get_fmap_value,FMAP_SECTION_RW_MRC_CACHE_START)
+endif # !CONFIG_SOC_AMD_COMMON_BLOCK_APOB_NV_DISABLE
+
+# Helper function to return a value with given bit set
+# Soft Fuse type = 0xb - See #57299 (NDA) for bit definitions.
+set-bit=$(call int-shift-left, 1 $(call _toint,$1))
+PSP_SOFTFUSE=$(shell A=$(call int-add, \
+		$(foreach bit,$(sort $(PSP_SOFTFUSE_BITS)),$(call set-bit,$(bit)))); printf "0x%x" $$A)
+
+#
+# Build the arguments to amdfwtool (order is unimportant).  Missing file names
+# result in empty OPT_ variables, i.e. the argument is not passed to amdfwtool.
+#
+
+add_opt_prefix=$(if $(call strip_quotes, $(1)), $(2) $(call strip_quotes, $(1)), )
+
+OPT_PSP_APCB_FILES= $(if $(APCB_SOURCES), --instance 0 --apcb $(APCB_SOURCES)) \
+                    $(if $(APCB_SOURCES1), --instance 1 --apcb $(APCB_SOURCES1)) \
+                    $(if $(APCB_SOURCES_RECOVERY), --instance 10 --apcb $(APCB_SOURCES_RECOVERY)) \
+                    $(if $(APCB_SOURCES_RECOVERY1), --instance 18 --apcb $(APCB_SOURCES_RECOVERY1)) \
+                    $(if $(APCB_SOURCES_RECOVERY2), --instance 19 --apcb $(APCB_SOURCES_RECOVERY2)) \
+                    $(if $(APCB_SOURCES_68), --instance 18 --apcb $(APCB_SOURCES_68))
+
+OPT_APOB_ADDR=$(call add_opt_prefix, $(PSP_APOB_BASE), --apob-base)
+OPT_PSP_BIOSBIN_FILE=$(call add_opt_prefix, $(PSP_BIOSBIN_FILE), --bios-bin)
+OPT_PSP_BIOSBIN_DEST=$(call add_opt_prefix, $(PSP_BIOSBIN_DEST), --bios-bin-dest)
+OPT_PSP_BIOSBIN_SIZE=$(call add_opt_prefix, $(PSP_BIOSBIN_SIZE), --bios-uncomp-size)
+
+OPT_APOB_NV_SIZE=$(call add_opt_prefix, $(APOB_NV_SIZE), --apob-nv-size)
+OPT_APOB_NV_BASE=$(call add_opt_prefix, $(APOB_NV_BASE), --apob-nv-base)
+
+OPT_PSP_SEV_NVRAM_BASE=$(call add_opt_prefix, $(PSP_SEV_NVRAM_BASE), --sev-nvram-base)
+OPT_PSP_SEV_NVRAM_SIZE=$(call add_opt_prefix, $(PSP_SEV_NVRAM_SIZE), --sev-nvram-size)
+
+OPT_EFS_ESPI_CONFIG=$(call add_opt_prefix, $(CONFIG_EFS_ESPI0_CONFIG0), --espi0-config0)
+OPT_EFS_ESPI_CONFIG+=$(call add_opt_prefix, $(CONFIG_EFS_ESPI1_CONFIG0), --espi1-config0)
+OPT_EFS_ESPI_CONFIG+=$(call add_opt_prefix, $(CONFIG_EFS_ESPI0_CONFIG1), --espi0-config1)
+OPT_EFS_ESPI_CONFIG+=$(call add_opt_prefix, $(CONFIG_EFS_ESPI1_CONFIG1), --espi1-config1)
+
+OPT_EFS_SPI_READ_MODE=$(call add_opt_prefix, $(CONFIG_EFS_SPI_READ_MODE), --spi-read-mode)
+OPT_EFS_SPI_SPEED=$(call add_opt_prefix, $(CONFIG_EFS_SPI_SPEED), --spi-speed)
+OPT_EFS_SPI_MICRON_FLAG=$(call add_opt_prefix, $(CONFIG_EFS_SPI_MICRON_FLAG), --spi-micron-flag)
+OPT_PSP_SOFTFUSE=$(call add_opt_prefix, $(PSP_SOFTFUSE), --soft-fuse)
+
+OPT_WHITELIST_FILE=$(call add_opt_prefix, $(PSP_WHITELIST_FILE), --whitelist)
+OPT_SPL_TABLE_FILE=$(call add_opt_prefix, $(SPL_TABLE_FILE), --spl-table)
+
+OPT_BIOS_AMDCOMPRESS=$(if $(CONFIG_CBFS_VERIFICATION), --elfcopy, --compress)
+OPT_BIOS_FWCOMPRESS=$(if $(CONFIG_CBFS_VERIFICATION), --bios-bin-uncomp)
+
+# Place the ucode files in order, Turin Classic first, then Turin Dense
+microcode_bins=$(wildcard ${FIRMWARE_LOCATION}/*U?odePatch_BRH_*.bin)
+microcode_bins+=$(wildcard ${FIRMWARE_LOCATION}/*U?odePatch_BRHD_*.bin)
+
+OPT_UCODE_FILES=$(foreach i, $(shell seq $(words $(microcode_bins))), \
+	$(call add_opt_prefix, $(word $(i), $(microcode_bins)), \
+	--instance $(shell printf "%x" $$(($(i)-1))) --ucode))
+
+OPT_VGA_IMAGE=$(call add_opt_prefix, $(CONFIG_PSP_EARLY_VGA_IMAGE), --early-vga-image)
+
+AMDFW_COMMON_ARGS=$(OPT_PSP_APCB_FILES) \
+		$(OPT_APOB_ADDR) \
+		$(OPT_APOB_NV_SIZE) \
+		$(OPT_APOB_NV_BASE) \
+		$(OPT_PSP_SEV_NVRAM_BASE) \
+		$(OPT_PSP_SEV_NVRAM_SIZE) \
+		$(OPT_UCODE_FILES) \
+		$(OPT_DEBUG_AMDFWTOOL) \
+		$(OPT_PSP_BIOSBIN_FILE) \
+		$(OPT_PSP_BIOSBIN_DEST) \
+		$(OPT_PSP_BIOSBIN_SIZE) \
+		$(OPT_PSP_SOFTFUSE) \
+		--use-pspsecureos \
+		--load-s0i3 \
+		$(OPT_BIOS_FWCOMPRESS) \
+		$(OPT_TOKEN_UNLOCK) \
+		$(OPT_WHITELIST_FILE) \
+		$(OPT_SPL_TABLE_FILE) \
+		$(OPT_EFS_SPI_READ_MODE) \
+		$(OPT_EFS_SPI_SPEED) \
+		$(OPT_EFS_SPI_MICRON_FLAG) \
+		$(OPT_EFS_ESPI_CONFIG) \
+		$(OPT_VGA_IMAGE) \
+		--config $(CONFIG_AMDFW_CONFIG_FILE) \
+		--flashsize $(call strip_quotes, $(CONFIG_ROM_SIZE))
+
+$(obj)/amdfw.rom:	$(call strip_quotes, $(PSP_BIOSBIN_FILE)) \
+			$$(PSP_APCB_FILES) \
+			$(DEP_FILES) \
+			$(UCODE_FILES) \
+			$(AMDFWTOOL) \
+			$(obj)/fmap_config.h \
+			$(objcbfs)/bootblock_fixed_data.elf # this target also creates the .map file
+	$(if $(PSP_APCB_FILES), ,$(error APCB_SOURCES is not set))
+	rm -f $@
+	@printf "    AMDFWTOOL  $(subst $(obj)/,,$(@))\n"
+	$(AMDFWTOOL) \
+		$(AMDFW_COMMON_ARGS) \
+		--location $(CONFIG_AMD_FWM_POSITION) \
+		--output $@
+
+#
+# Extracts everything from the ELF's first PT_LOAD area and compresses it.
+# This discards everything before PT_LOAD, every symbol, debug information
+# and relocations. The generated binary is expected to run at PSP_BIOSBIN_DEST
+# with a maximum size of PSP_BIOSBIN_SIZE. The entrypoint is fixed at
+# PSP_BIOSBIN_DEST + PSP_BIOSBIN_SIZE - 0x10.
+#
+$(PSP_BIOSBIN_FILE): $(PSP_ELF_FILE) $(AMDCOMPRESS)
+	rm -f $@
+	@printf "    AMDCOMPRS  $(subst $(obj)/,,$(@))\n"
+	$(AMDCOMPRESS) --infile $(PSP_ELF_FILE) --outfile $@ \
+		$(OPT_BIOS_AMDCOMPRESS) --maxsize $(PSP_BIOSBIN_SIZE)
+
+else
+# Set FIRMWARE_LOCATION to get the microcode files
+FIRMWARE_LOCATION=3rdparty/amd_firmwares/Firmwares/Turin
+endif # ifneq ($(call strip_quotes, $(CONFIG_AMDFW_CONFIG_FILE)),)
+endif

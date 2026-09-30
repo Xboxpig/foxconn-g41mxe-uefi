@@ -1,0 +1,28 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+config SOC_INTEL_COMMON_BLOCK_POWER_LIMIT
+	bool
+	default n
+	help
+	  This option allows to configure processor power limit values.
+
+config SOC_HAS_MSR_VR_CURRENT_CONFIG
+	bool
+	default y
+	depends on SOC_INTEL_COMMON_BLOCK_POWER_LIMIT
+	help
+	  Select if the SoC supports programming PL4 through
+	  MSR_VR_CURRENT_CONFIG.
+
+config SOC_INTEL_RAPL_DISABLE_VIA_MCHBAR
+	bool
+	default n
+	help
+	  Select if disabling Running Average Power Limit (RAPL) has to be done via MCHBAR.
+
+config SOC_INTEL_COMMON_BLOCK_VARIANT_POWER_LIMIT
+	bool
+	default n
+	help
+	  This option allows to configure processor power limit values
+	  for different variants based on CPU TDP and machine id.

@@ -1,0 +1,13 @@
+[
+  {"name":"eist","qid":672,"form":10048,"default":1,"label":"Enhanced Intel SpeedStep","help":"Core 2/Xeon P-state policy. Applied by coreboot after reset.","choices":{"0":"Disabled","1":"Enabled"}},
+  {"name":"vmx","qid":641,"form":10048,"default":1,"label":"Intel Virtualization Technology (VT-x)","help":"Enable or disable VMX on the next boot. This is not VT-d.","choices":{"0":"Disabled","1":"Enabled"}},
+  {"name":"gfx_uma_size","qid":10069,"form":10074,"default":6,"label":"GMA X4500 Pre-Allocated Memory","help":"G41 graphics stolen memory, reserved before the OS starts. Applied after reset.","choices":{"6":"64 MiB","7":"128 MiB","8":"256 MiB","9":"96 MiB","10":"160 MiB","11":"224 MiB","12":"352 MiB"}},
+  {"name":"sata_mode","qid":10105,"form":10131,"default":2,"label":"ICH7 SATA Controller Mode","help":"This ICH7 has no AHCI or RAID. Changing IDE mode can prevent an installed OS from booting.","choices":{"1":"IDE Legacy Combined","2":"IDE Native"}},
+  {"name":"pata_controller","qid":4209,"form":10131,"default":1,"label":"PATA / IDE Controller","help":"Enable the ICH7 parallel ATA controller. Changes apply after reset.","choices":{"0":"Disabled","1":"Enabled"}},
+  {"name":"hd_audio","qid":3106,"form":10131,"default":1,"label":"Onboard HD Audio","help":"Enable the ICH7 HD Audio controller. Changes apply after reset.","choices":{"0":"Disabled","1":"Enabled"}},
+  {"name":"onboard_lan","qid":1882,"form":10131,"default":1,"label":"Onboard Realtek LAN","help":"Enable the PCIe port connected to the RTL8168/RTL8111 controller. Changes apply after reset.","choices":{"0":"Disabled","1":"Enabled"}},
+  {"name":"power_on_after_fail","qid":11202,"form":10131,"default":0,"label":"Restore After AC Power Loss","help":"ICH7 policy after mains power returns. Previous-state restore is not implemented. Changes apply after reset.","choices":{"0":"Power Off","1":"Power On"}},
+  {"name":"post_success_beep","qid":4221,"form":10131,"default":1,"label":"Successful POST Beep","help":"One short tone at coreboot payload handoff. Requires a speaker connected to the board header.","choices":{"0":"Disabled","1":"Enabled"}},
+  {"name":"nmi","qid":3584,"form":10131,"default":0,"label":"Non-Maskable Interrupts","help":"ICH7 NMI source policy. Changes apply after reset.","choices":{"0":"Disabled","1":"Enabled"}},
+  {"name":"memory_fast_boot","qid":968,"form":10004,"default":1,"label":"Memory Training Cache","help":"Enabled: reuse verified training. Disabled: full training on cold boot, including a cold reset after warm reboot. S3 resume still needs its saved training.","choices":{"0":"Full Training","1":"Use Validated Cache"}}
+]
